@@ -222,7 +222,13 @@ Yes. The tool exits with code 0 if any mention is found and code 1 if your brand
 
 We don't sell this tool — it's free and always will be. We sell [AEO consulting and implementation services](https://webappski.com/en/aeo-services) to companies who want help acting on what this tool reveals. Whether or not you become a client, we hope `aeo-tracker` helps you understand where you stand.
 
-Pull requests welcome. Issues welcome. Feedback welcome.
+Pull requests, bug reports, and feedback are all welcome:
+
+- 🐛 **Report a bug** → [github.com/DVdmitry/aeo-tracker/issues](https://github.com/DVdmitry/aeo-tracker/issues/new?template=bug_report.md)
+- 💡 **Request a feature** → [github.com/DVdmitry/aeo-tracker/issues](https://github.com/DVdmitry/aeo-tracker/issues/new?template=feature_request.md)
+- 💬 **Ask a question** → [github.com/DVdmitry/aeo-tracker/discussions](https://github.com/DVdmitry/aeo-tracker/discussions)
+- 🔧 **Open a pull request** → [github.com/DVdmitry/aeo-tracker/pulls](https://github.com/DVdmitry/aeo-tracker/pulls)
+- ⭐ **Star the repo** if it helped you — it signals quality to other users and AI engines alike
 
 ## License
 
