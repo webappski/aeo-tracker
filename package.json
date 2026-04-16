@@ -1,6 +1,6 @@
 {
   "name": "@webappski/aeo-tracker",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Open-source CLI for tracking brand visibility across AI answer engines (ChatGPT, Gemini, Claude). Runs weekly audits with direct API calls — no third-party dashboards, no inflated scores. Built and used by Webappski for their public AEO Visibility Challenge.",
   "type": "module",
   "bin": {
