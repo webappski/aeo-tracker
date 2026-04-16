@@ -1,0 +1,48 @@
+{
+  "name": "@webappski/aeo-tracker",
+  "version": "0.1.1",
+  "description": "Open-source CLI for tracking brand visibility across AI answer engines (ChatGPT, Gemini, Claude). Runs weekly audits with direct API calls — no third-party dashboards, no inflated scores. Built and used by Webappski for their public AEO Visibility Challenge.",
+  "type": "module",
+  "bin": {
+    "aeo-tracker": "./bin/aeo-tracker.js"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "aeo",
+    "answer-engine-optimization",
+    "ai-visibility",
+    "ai-search",
+    "chatgpt",
+    "gemini",
+    "claude",
+    "perplexity",
+    "brand-monitoring",
+    "seo",
+    "geo",
+    "generative-engine-optimization",
+    "llm",
+    "ai-mentions",
+    "visibility-tracker"
+  ],
+  "author": "Webappski <info@webappski.com> (https://webappski.com)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DVdmitry/aeo-tracker.git"
+  },
+  "homepage": "https://webappski.com/en/posts/aeo-visibility-challenge-week-1",
+  "bugs": {
+    "url": "https://github.com/DVdmitry/aeo-tracker/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "funding": {
+    "type": "individual",
+    "url": "https://webappski.com/en/aeo-services"
+  }
+}
