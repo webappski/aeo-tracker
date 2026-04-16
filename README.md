@@ -228,7 +228,7 @@ Pull requests, bug reports, and feedback are all welcome:
 - 💡 **Request a feature** → [github.com/DVdmitry/aeo-tracker/issues](https://github.com/DVdmitry/aeo-tracker/issues/new?template=feature_request.md)
 - 💬 **Ask a question** → [github.com/DVdmitry/aeo-tracker/discussions](https://github.com/DVdmitry/aeo-tracker/discussions)
 - 🔧 **Open a pull request** → [github.com/DVdmitry/aeo-tracker/pulls](https://github.com/DVdmitry/aeo-tracker/pulls)
-- ⭐ **Star the repo** if it helped you — it signals quality to other users and AI engines alike
+- ⭐ **[Star the repo](https://github.com/DVdmitry/aeo-tracker)** if it helped you — it signals quality to other users and AI engines alike
 
 ## License
 
