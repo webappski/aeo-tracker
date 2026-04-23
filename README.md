@@ -5,15 +5,36 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 [![GitHub stars](https://img.shields.io/github/stars/DVdmitry/aeo-tracker?style=social)](https://github.com/DVdmitry/aeo-tracker)
 
-**The free, open-source AEO (Answer Engine Optimization) tracker for monitoring brand visibility across ChatGPT, Gemini, Claude, and Perplexity. An alternative to Profound, Otterly, and Peec.ai that hits official AI APIs instead of web-scraping.**
+**The free, open-source AEO (Answer Engine Optimization) tracker that measures how often AI answer engines name your brand — and generates the LLM-powered action plan to move the needle. An alternative to Profound, Otterly, and Peec.ai that hits official AI APIs instead of web-scraping.**
 
-`@webappski/aeo-tracker` is a Node.js CLI that measures how often AI answer engines mention your brand, tracks your position in ranked AI answers, extracts competitor mentions, and saves verbatim AI quotes for audit.
+## TL;DR
+
+**`@webappski/aeo-tracker` checks whether ChatGPT, Gemini, Claude, and Perplexity mention your brand — runs locally, reads your keys from shell env, generates a markdown + HTML report.**
+
+```bash
+npm install -g @webappski/aeo-tracker
+export OPENAI_API_KEY="sk-proj-..."          # required
+export GEMINI_API_KEY="AIzaSy..."             # required
+aeo-tracker init --yes --brand=YOURBRAND --domain=YOURDOMAIN.COM --auto \
+  && aeo-tracker run \
+  && aeo-tracker report --html
+```
+
+**Cost:** ~$0.20 per run at the 2-key minimum. **Get keys (2 min):** [OpenAI](https://platform.openai.com/api-keys) · [Google AI Studio](https://aistudio.google.com/apikey). **Optional engine columns:** [Claude](https://console.anthropic.com/settings/keys) (+~$0.30), [Perplexity](https://docs.perplexity.ai/) (+~$0.05).
+
+> **Never opened a terminal before?** Jump to [Path B — first time in a terminal](#path-b--first-time-in-a-terminal-510-minutes) for a 5-minute walkthrough. **Want the full context first?** See [Key facts](#key-facts) and [What you see in the report](#what-you-see-in-the-report) below.
+
+---
+
+`@webappski/aeo-tracker` is a Node.js CLI that measures how often AI answer engines mention your brand, tracks your position in ranked AI answers, extracts competitor mentions, saves verbatim AI quotes for audit, and produces a prioritised, engine-specific action plan (e.g. *"email editors of firstpagesage.com to get added to their AEO agency list — cited 2× by AI this run"*).
+
+**Minimum setup needs 2 API keys: OpenAI + Gemini (~$0.20/run).** That covers the ChatGPT and Gemini columns of the report. Add `ANTHROPIC_API_KEY` to unlock the Claude column (~$0.50/run total) or `PERPLEXITY_API_KEY` for the Perplexity column (~$0.55/run). OpenAI + Gemini are required because they also power the two-model extractor described below — Anthropic and Perplexity are strictly optional engine expansions.
 
 **As of April 2026, `@webappski/aeo-tracker` is the only open-source AEO tracker that calls ChatGPT, Gemini, Claude, and Perplexity via official APIs** — no web scraping, no proxied browser sessions, no third-party scoring layer between you and the raw AI output.
 
-It also uses a **two-model LLM cross-check** (GPT + Gemini) to verify every extracted competitor name against the source text, so hallucinated brand mentions are filtered out — a defense your subscription competitors don't offer.
+It also uses a **two-model LLM cross-check on competitor extraction** (`gpt-5.4-mini` + `gemini-2.5-flash` — the two cheap classification models, not the engine-measurement models): every brand name extracted from an AI response is independently verified against the source text by both models. If only one model found it, the name lands in the "unverified" tier of the report (dashed badge); if both agreed, it's "verified" (solid badge). Hallucinated brand mentions are filtered out automatically — a defense subscription competitors don't offer.
 
-Zero runtime dependencies, MIT license, ~$0.20/run (2-engine minimum) to ~$0.55/run (full coverage) using your own API keys. Works with Node.js 18+ on macOS, Linux, and Windows.
+Zero runtime dependencies, MIT license, ~$0.20/run (2-engine minimum) to ~$0.55/run (full 4-engine coverage) using your own API keys. Works with Node.js 18+ on macOS, Linux, and Windows.
 
 ### Key facts
 
@@ -25,8 +46,22 @@ Zero runtime dependencies, MIT license, ~$0.20/run (2-engine minimum) to ~$0.55/
 - **Architecture:** Direct provider APIs (no web scraping, no third-party dashboard, no vendor lock-in)
 - **Extraction:** Two-model LLM cross-check (GPT + Gemini) with hallucination filter
 - **Validation:** Pre-flight query checks — ambiguous acronym detection + LLM industry-fit + commercial-intent filter
+- **Resilience:** `init --auto` retries across providers on billing/auth/rate-limit errors; actionable error panels on every failure path (top-up links, regenerate-key hints, `--keywords` escape hatch) — no raw Node stack traces unless `AEO_DEBUG=1`
 - **Runtime:** Node.js ≥18, zero runtime dependencies
 - **License:** MIT open source, source code on GitHub
+
+### How your API keys are used
+
+Two roles, often confused. This table makes the split explicit:
+
+| Role | What it does | Models used | API keys needed |
+|---|---|---|---|
+| **Engines being measured** (report columns) | The AI systems your buyers actually query. Each engine gets its own column in the report showing whether it mentioned your brand. | `gpt-5-search-api`, `gemini-2.5-pro`, `claude-sonnet-4-6`, `sonar-pro` | OpenAI + Gemini **required** (ChatGPT + Gemini columns). Anthropic **optional** (Claude column). Perplexity **optional** (Perplexity column). |
+| **Competitor extractor cross-check** (every run) | Runs after each engine response: two cheap LLMs independently extract brand names from the response text and cross-verify against the source. Mismatches land in the "unverified" tier with a dashed badge. | `gpt-5.4-mini` + `gemini-2.5-flash` (the CLASSIFY-tier models from OpenAI + Google — not the engine-measurement models) | Uses the **same** OpenAI + Gemini keys as above — no extra keys needed. |
+
+**Why OpenAI + Gemini are required, Anthropic + Perplexity optional:** because your OpenAI and Gemini keys pull double duty (engine + extractor), losing either one breaks the extractor's cross-check. Anthropic and Perplexity only add engine columns — skipping them doesn't compromise the report's reliability.
+
+> **`init --auto` is resilient to provider outages.** If your priority-#1 research provider returns a billing, auth, or rate-limit error (402/401/429), init automatically retries with the next provider in the priority order (`OpenAI → Gemini → Anthropic`). Only if every configured provider fails do you see an abort — and in that case init prints an actionable panel listing every attempt, a top-up link per failing provider, and a `--keywords` escape hatch that skips the brainstorm entirely. Real bugs (TypeError, malformed requests, generic 5xx) are NOT retried — they surface immediately so the root cause isn't masked.
 
 > Built by [Webappski](https://webappski.com), an Answer Engine Optimization agency that runs aeo-tracker weekly on its own brand. We open-sourced aeo-tracker after measuring 28–44/100 on HubSpot's AEO Grader while direct API tests showed zero mentions of Webappski — third-party AEO scores are not reality.
 
@@ -34,15 +69,169 @@ Zero runtime dependencies, MIT license, ~$0.20/run (2-engine minimum) to ~$0.55/
 
 > The "Recommended actions" section from a real `aeo-tracker run` on Webappski's own brand. Every card is LLM-generated from your actual run data — specific engines, specific URLs, specific competitors to displace. Zero external assets, renders on GitHub and Notion.
 
-## Quickstart (3 commands, ~60 seconds)
+## Quickstart
+
+Two paths — pick the one that matches your comfort level. Both end with the same working install.
+
+### Path A — you're comfortable with a terminal (~60 seconds)
 
 ```bash
 npm install -g @webappski/aeo-tracker
-export OPENAI_API_KEY=sk-... GEMINI_API_KEY=AIza...
-aeo-tracker init --yes --brand=YOURBRAND --domain=YOURDOMAIN.COM --auto && aeo-tracker run && aeo-tracker report --html
+
+# Export your 2 required keys. Replace the placeholders with real values
+# from https://platform.openai.com/api-keys and https://aistudio.google.com/apikey.
+export OPENAI_API_KEY="sk-proj-..."          # starts with "sk-proj-" or "sk-"
+export GEMINI_API_KEY="AIzaSy..."             # starts with "AIzaSy"
+
+# Optional — add these later to unlock more engine columns in the report:
+# export ANTHROPIC_API_KEY="sk-ant-api03-..."   # starts with "sk-ant-"
+# export PERPLEXITY_API_KEY="pplx-..."           # starts with "pplx-"
+
+# Run everything in one chain
+aeo-tracker init --yes --brand=YOURBRAND --domain=YOURDOMAIN.COM --auto \
+  && aeo-tracker run \
+  && aeo-tracker report --html
 ```
 
-Get your 2 required API keys in ~2 minutes: [OpenAI](https://platform.openai.com/api-keys), [Google AI Studio](https://aistudio.google.com/apikey). Anthropic / Perplexity keys are optional (they add engine columns to the report). First run costs ~$0.20.
+### Path B — first time in a terminal (~5–10 minutes)
+
+If you've never run a CLI tool before, that's fine — aeo-tracker needs one-time setup, but weekly `run` takes zero terminal skill after that. Founder-friendly walk-through:
+
+**1. Open Terminal.** On macOS: <kbd>⌘</kbd>+<kbd>Space</kbd> → type `Terminal` → Enter. On Windows 10/11: Start menu → type `PowerShell` → Enter. On Linux: you know where it is.
+
+**2. Install Node.js (once per machine).** Check if you have it: paste `node --version` and press Enter. If it prints `v18.x.x` or higher, skip to step 3. If you get "command not found", download and run the installer from [nodejs.org](https://nodejs.org) (LTS version). Re-open Terminal after install.
+
+**3. Install aeo-tracker.** Paste and Enter:
+```bash
+npm install -g @webappski/aeo-tracker
+```
+If you see a permission error about `EACCES`, the fix is [on the npm docs](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). Typically: `sudo npm install -g @webappski/aeo-tracker` on macOS/Linux.
+
+**4. Get your 2 required API keys.** Open these two links in new tabs, sign up (free), and click "Create new key" on each. Copy the full key string each gives you (looks like `sk-proj-...` for OpenAI, `AIzaSy...` for Google).
+
+- OpenAI — https://platform.openai.com/api-keys
+- Google Gemini — https://aistudio.google.com/apikey
+
+**5. Save the keys to your shell profile.** Paste these lines into Terminal **one at a time**, replacing `PASTE_KEY_HERE` with the actual strings from step 4:
+
+```bash
+echo 'export OPENAI_API_KEY="PASTE_OPENAI_KEY_HERE"' >> ~/.zshrc
+echo 'export GEMINI_API_KEY="PASTE_GEMINI_KEY_HERE"' >> ~/.zshrc
+
+# Optional — skip if you don't have these keys. Add them later if you want
+# the Claude and Perplexity columns in your report:
+# echo 'export ANTHROPIC_API_KEY="PASTE_ANTHROPIC_KEY_HERE"' >> ~/.zshrc
+# echo 'export PERPLEXITY_API_KEY="PASTE_PERPLEXITY_KEY_HERE"' >> ~/.zshrc
+
+source ~/.zshrc
+```
+
+> **Windows/PowerShell users:** use `[System.Environment]::SetEnvironmentVariable('OPENAI_API_KEY','...','User')` instead, then restart PowerShell.
+>
+> **If your shell is `bash` (rare on modern macOS):** replace `~/.zshrc` with `~/.bashrc` in the lines above.
+
+**6. Run aeo-tracker.** Replace `YOURBRAND` and `YOURDOMAIN.COM` with your actual brand name and domain:
+
+```bash
+aeo-tracker init --yes --brand=YOURBRAND --domain=YOURDOMAIN.COM --auto
+aeo-tracker run
+aeo-tracker report --html
+```
+
+The HTML report auto-opens in your browser. From week 2 onward, just `aeo-tracker run && aeo-tracker report --html` once a week — that's your entire ongoing workflow.
+
+### What if my keys are already in `.zshrc` under different names?
+
+Common on dev machines — you already use ChatGPT/Claude via some other tool and the keys live in `~/.zshrc` (or `~/.bashrc`, `~/.profile`) under custom names. `aeo-tracker init` tries to find them in three stages before giving up:
+
+**Stage 1 — standard names.** If you have any of these in shell env, they're used directly:
+```
+OPENAI_API_KEY   GEMINI_API_KEY   ANTHROPIC_API_KEY   PERPLEXITY_API_KEY
+```
+
+**Stage 2 — heuristic fallback.** If standard names are missing, `aeo-tracker` scans every env var in your shell against these regex patterns (name must **start** with a provider keyword AND contain `API`, `KEY`, `TOKEN`):
+
+```
+OpenAI:     ^(OPENAI | GPT)         + any chars + (API | KEY | TOKEN)
+Gemini:     ^(GEMINI | GOOGLE_AI)   + any chars + (API | KEY | TOKEN)
+Anthropic:  ^(CLAUDE | ANTHROPIC)   + any chars + (API | KEY | TOKEN)
+Perplexity: ^(PERPLEXITY | PPLX)    + any chars + (API | KEY | TOKEN)
+```
+
+Matches found this way are **proposed for confirmation** during `init`:
+```
+Heuristic match — these look like API keys under non-standard names:
+  ? OpenAI (ChatGPT): OPENAI_API_KEY_DEV
+  ? Google (Gemini):  GEMINI_KEY_PROD
+Accept these? [Y/n]
+```
+
+Whatever you confirm is written into `.aeo-tracker.json` under `providers[].env`, so every later `run` knows where to look. **Your actual key values stay in `process.env`** — never written to disk.
+
+**Stage 3 — interactive per-provider prompt.** For EVERY provider still missing after stages 1+2, `init` asks you directly: *"OpenAI (ChatGPT) env var name (required):"*. Required providers (OpenAI + Gemini) retry up to 3 times on bad input. Optional providers (Anthropic + Perplexity) accept Enter to skip. You type just the **name** of the env var (e.g. `MY_OPENAI_KEY`), never the key itself — your actual key stays in `process.env`.
+
+> **Security:** If you accidentally paste an API key value instead of an env var name, `init` detects it via provider-specific prefixes (`sk-proj-`, `AIzaSy`, `sk-ant-`, `pplx-`) and rejects the input with a clear message — *"that looks like an API key value, not an env var name"*. Your actual key value is never logged, never displayed, never written to disk. Only the env var **name** lands in `.aeo-tracker.json::providers[].env`.
+
+> **Important:** Stage 3 also runs when stages 1+2 found SOME providers but not all — e.g. if you have `OPENAI_API_KEY` (auto-detected) but Gemini sits under `MY_GEMINI_VAR` (not heuristic-matched), init still prompts you for Gemini. You can't end up half-configured.
+
+### Which names match, which don't
+
+| Name in your `~/.zshrc` | Stage | Why |
+|---|---|---|
+| `OPENAI_API_KEY` | 1 ✓ | exact standard name |
+| `OPENAI_API_KEY_DEV` | 2 ✓ | starts with `OPENAI`, contains `KEY` |
+| `GPT_TOKEN` | 2 ✓ | `GPT` alias |
+| `CLAUDE_KEY` | 2 ✓ | `CLAUDE` alias |
+| `GOOGLE_AI_TOKEN` | 2 ✓ | `GOOGLE_AI` alias |
+| `PPLX_API_KEY` | 2 ✓ | `PPLX` alias |
+| `MY_OPENAI_KEY` | 3 (manual) ✗ | regex anchored — name must **start** with `OPENAI` |
+| `DEV_CLAUDE_TOKEN` | 3 (manual) ✗ | same — prefix blocks match |
+| `SECRET_AI_KEY` | 3 (manual) ✗ | no provider keyword |
+
+### If your name doesn't auto-match — three fixes
+
+**Option A (simplest, recommended): create a standard-name alias in `~/.zshrc`.**
+Keep your original var; add a line that points the standard name at it. Works for any tool that expects standard names, not just aeo-tracker:
+
+```bash
+# Add next to your existing line in ~/.zshrc
+export OPENAI_API_KEY="$MY_OPENAI_KEY"
+# Then reload the shell
+source ~/.zshrc
+```
+
+Result: both `OPENAI_API_KEY` and `MY_OPENAI_KEY` resolve to the same key. Stage 1 finds it instantly.
+
+**Option B: use the Stage 3 interactive prompt.**
+Run `aeo-tracker init` (without `--yes`, so it's interactive). When it asks *"No API keys auto-detected. Do you have API keys under custom env var names? [y/N]"*, answer `y`. It walks through each provider and lets you type the exact var name (e.g. `MY_OPENAI_KEY`). Your answer is saved to `.aeo-tracker.json::providers.openai.env` and reused on every subsequent `run`.
+
+**Option C: edit `.aeo-tracker.json` by hand.**
+If you prefer fully explicit config (or you're setting up in a CI environment where interactive prompts don't fit), create `.aeo-tracker.json` manually with the `env` fields pointing at your custom names:
+```json
+{
+  "providers": {
+    "openai":    { "model": "gpt-5-search-api", "env": "MY_OPENAI_KEY" },
+    "gemini":    { "model": "gemini-2.5-pro",    "env": "MY_GEMINI_VAR" },
+    "anthropic": { "model": "claude-sonnet-4-6", "env": "CLAUDE_SECRET" }
+  }
+}
+```
+Then `aeo-tracker run` reads those vars from `process.env` on each invocation — no re-detection needed.
+
+### CI-mode caveat
+
+In CI (`aeo-tracker init --yes`), Stage 3 (interactive prompt) is disabled — CI can't answer prompts. If neither Stage 1 nor Stage 2 finds your keys, `init --yes` hard-fails with an explicit error. **For CI always use Option A (standard-name alias) or Option C (explicit `env` in pre-committed `.aeo-tracker.json`).**
+
+### Get your keys
+
+| Provider | Link | Notes |
+|---|---|---|
+| OpenAI (required) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | Create a "project" key — scoped to this project only. Starts with `sk-proj-`. |
+| Google Gemini (required) | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Starts with `AIzaSy`. Free tier covers weekly cadence for one brand. |
+| Anthropic Claude (optional) | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) | Adds Claude column (~$0.30/run). Starts with `sk-ant-`. |
+| Perplexity (optional) | [docs.perplexity.ai](https://docs.perplexity.ai/) | Adds Perplexity column (~$0.05/run). Starts with `pplx-`. |
+
+First run costs ~$0.20 at the 2-key minimum.
 
 ## Your first run will show 0% — that's normal
 
@@ -137,6 +326,7 @@ The foundational metric is trivially simple: *"When a user asks an AI engine abo
 - [Commands](#commands) — full CLI reference
 - [Exit codes](#exit-codes) — graduated CI alerting
 - [Configuration](#configuration)
+- [Environment variables](#environment-variables) — `AEO_DEBUG`, `NO_COLOR`
 - [Manual paste mode](#manual-paste-mode) — for Perplexity, Copilot, ChatGPT Pro UI
 - [CI integration](#ci-integration) — GitHub Actions, bash cron
 - [Compared to alternatives](#compared-to-alternatives) — Profound, Otterly, Peec.ai, HubSpot, Ahrefs
@@ -262,6 +452,8 @@ aeo-tracker --help
 
 ### Migrating from 0.1.x to 0.2.x
 
+> **Upgrading from 0.2.0 or 0.2.1 to 0.2.2?** No action needed — patches only. 0.2.1 was internal code quality; 0.2.2 adds init resilience + actionable error panels (see [Roadmap](#roadmap)). Same config, same env vars, same exit codes.
+
 If you're upgrading from a previously-installed `@webappski/aeo-tracker@0.1.x`, 0.2.0 introduces two breaking changes. Neither will silently corrupt your data — each hard-fails with a clear message — but both require a one-time action.
 
 **1. Set both `OPENAI_API_KEY` and `GEMINI_API_KEY`.** 0.1.x worked with any single provider. 0.2.0 uses OpenAI + Gemini jointly as the two-model competitor extractor, so both are required on every `run`. If you only had one of them before, get the second key in ~2 minutes: [OpenAI keys](https://platform.openai.com/api-keys), [Google AI Studio](https://aistudio.google.com/apikey). Anthropic and Perplexity remain optional.
@@ -279,9 +471,14 @@ This keeps your brand, domain, and provider config; only the 3 queries are refre
 ### First run (minimum 2 keys)
 
 ```bash
-# Export your two required keys (or use .env / your shell rc file)
-export OPENAI_API_KEY="sk-..."
-export GEMINI_API_KEY="AIza..."
+# Export your two required keys (or add to ~/.zshrc — see Quickstart Path B).
+# Key prefixes: OpenAI "sk-proj-" / Gemini "AIzaSy" / Anthropic "sk-ant-" / Perplexity "pplx-".
+export OPENAI_API_KEY="sk-proj-..."
+export GEMINI_API_KEY="AIzaSy..."
+
+# Optional — skip if absent. Each adds one engine column to the report:
+# export ANTHROPIC_API_KEY="sk-ant-api03-..."
+# export PERPLEXITY_API_KEY="pplx-..."
 
 # Setup — creates .aeo-tracker.json with 3 validated commercial queries
 aeo-tracker init --yes --brand="YourBrand" --domain="yourbrand.com" --auto
@@ -338,6 +535,8 @@ The entire first-run flow takes ~60 seconds and costs ~$0.20 in API calls at 2-k
 | `1` | Score dropped more than `regressionThreshold` (default `10`pp) | high-priority alert — visibility regressing |
 | `2` | All checks returned zero mentions | medium alert — brand invisible everywhere (normal on day 1) |
 | `3` | All providers errored | infrastructure alert — keys/billing/network issue |
+
+When `run` exits `3`, it prints the **"all engines failed" panel** — per-engine reason grouped by provider, affected query count, the env var each key was read from, and option-numbered fixes (top-up link per failing billing, key-regeneration hint per auth failure, wait-and-retry for rate-limits, infra-check for network errors, and a final *"remove the failing engine from `.aeo-tracker.json`"* escape hatch). Skipped in `--json` mode so programmatic consumers still parse clean JSON.
 
 Tune the threshold in `.aeo-tracker.json`:
 
@@ -430,6 +629,15 @@ Subscription AEO tools typically run $29–$299+/month. Model names reflect the 
 | `--keywords "q1,q2,q3"` (BYO) | **$0** | You already have your queries (migration, manual research) |
 | `--manual` | $0 | Type queries in the interactive prompt |
 | Single-provider full pipeline | ~$0.003 | Only one LLM API key configured — validator skipped, warning issued |
+
+### Environment variables
+
+API keys (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`) are covered under [API keys](#api-keys). The following operational flags modify output behaviour:
+
+| Variable | Effect |
+|---|---|
+| `AEO_DEBUG=1` | On unexpected errors (anything classified as `other`), print the raw Node stack trace to stderr in addition to the actionable panel. Default off — production users see only the panel |
+| `NO_COLOR=1` | Disable ANSI color codes in all output (panels, tables, progress bars). Useful for CI logs, dumb terminals, and piping to files |
 
 ---
 
@@ -636,7 +844,7 @@ No. We explicitly disable web-search tools on every LLM auto-suggest call. The m
 
 ### Is my data safe?
 
-Yes. No data leaves your machine except to the AI providers you configure (same providers you'd query from a browser). No telemetry. No analytics. No traffic to `webappski.com`. Raw responses stay on your disk. Our User-Agent string identifies the tool when fetching your own site (`aeo-tracker/0.2.1 (+https://webappski.com)`).
+Yes. No data leaves your machine except to the AI providers you configure (same providers you'd query from a browser). No telemetry. No analytics. No traffic to `webappski.com`. Raw responses stay on your disk. Our User-Agent string identifies the tool when fetching your own site (`aeo-tracker/0.2.2 (+https://webappski.com)`).
 
 ### I run a site in Polish / German / French. Does it work?
 
@@ -716,9 +924,13 @@ Yes, for users who prefer open source and self-hosted. Peec.ai is a subscription
 
 ## Roadmap
 
-**v0.2.0 (current, April 2026)** — Two-model LLM competitor extractor (GPT + Gemini cross-check, hallucination filter), commercial-only query validator, full HTML report with interactive per-cell drill-down, category-aware extraction, validation cache, LLM-generated recommended actions, response-quality tiers. **Breaking changes:** run now requires both OpenAI + Gemini keys; non-commercial queries rejected by default. See [Migrating from 0.1.x](#migrating-from-01x-to-02x). 77 tests. DONE.
+**v0.2.2 (current, 2026-04-23)** — Init resilience (retry loop across `OpenAI → Gemini → Anthropic` on 402/401/429), full error-coverage matrix (billing / auth / rate-limit / network / filesystem / config / site-fetch / bot-protection), actionable error panels on every failure path (init abort, all-engines-failed, top-level catch), per-provider interactive key prompt for non-standard env var names. **No breaking changes vs 0.2.0.** 129 tests. DONE.
+
+**v0.2.0 (2026-04)** — Two-model LLM competitor extractor (GPT + Gemini cross-check, hallucination filter), commercial-only query validator, full HTML report with interactive per-cell drill-down, category-aware extraction, validation cache, LLM-generated recommended actions, response-quality tiers. **Breaking changes:** run now requires both OpenAI + Gemini keys; non-commercial queries rejected by default. See [Migrating from 0.1.x](#migrating-from-01x-to-02x).
 
 For the full version history (keyword research pipeline, manual paste mode, `diff`, `--json`, exit codes, auto-suggest) see [CHANGELOG.md](./CHANGELOG.md).
+
+**v0.3.0 (in progress)** — Structured provider error protocol (`AeoProviderError` as public API), `withProviderFallback` abstraction replacing the inline retry loop, consolidated `AeoError` + single-dispatcher exit-code ownership, unified panel renderer, integration tests against frozen provider-response fixtures. Internal refactor, no CLI break. See [`docs/v0.3.0-architecture-migration.md`](./docs/v0.3.0-architecture-migration.md).
 
 **Next (no fixed dates — feedback-driven):**
 - Multi-brand profiles for agencies running weekly audits on many clients

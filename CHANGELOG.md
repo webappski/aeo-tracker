@@ -2,9 +2,107 @@
 
 All notable changes to `@webappski/aeo-tracker`.
 
-## [0.2.1] — 2026-04-23
+## [0.2.2] — 2026-04-23
 
-Patch release. **No breaking changes, no behavioural changes for existing users.** Internal code quality + documentation polish after 0.2.0 ship.
+Patch release. **No breaking changes, no behavioural changes for existing users with standard env var names.** Bundles the 0.2.1 work (README + internal code quality) with two targeted UX fixes: non-standard env var naming + research-provider resilience.
+
+### Added — init research-provider resilience
+
+Previously: `init --auto` picked ONE research provider (priority #1 in `PROVIDER_PRIORITY`) for the brainstorm pipeline. If that single provider returned 402 (credit balance empty), 401 (invalid key), or 429 (rate-limit), the whole init crashed with a generic *"Auto-suggest failed / Aborting"* message — even when the user had two other working keys in their environment.
+
+This was inconsistent with how `run` handles the same errors: a single engine's billing issue becomes a red `status: 'error'` cell in the report; other engines keep working. Init should be equally error-tolerant.
+
+**Two complementary fixes:**
+
+**1. `PROVIDER_PRIORITY` reordered** from `['anthropic', 'openai', 'gemini']` to `['openai', 'gemini', 'anthropic']`. Required providers (per README contract) now come first, optional providers last. Matches the declared user-facing model.
+
+**2. Retry loop in the auto-suggest pipeline.** Init now walks `PROVIDER_PRIORITY` until one provider succeeds. Billing/auth/rate-limit errors trigger automatic retry with the next provider; real bugs (TypeError, SyntaxError, malformed requests) bubble up as before — they're not silently swallowed.
+
+**Actionable failure panel.** When every available provider fails (rare — requires all configured billings to be empty), init prints a structured panel listing every attempt, the classified reason, and three copy-pastable fixes:
+
+```
+  All research providers failed — init cannot brainstorm queries on its own.
+
+  Attempted (in priority order):
+    ✗ OpenAI (ChatGPT) — empty billing balance
+      "You exceeded your current quota..."
+    ✗ Google (Gemini) — empty billing balance
+      "Billing account ... is disabled"
+
+  How to fix — pick one:
+
+    1. Top up billing on one of these providers (brainstorm costs ~$0.01):
+         OpenAI (ChatGPT): https://platform.openai.com/settings/organization/billing/overview
+         Google (Gemini):  https://aistudio.google.com/apikey
+
+    2. Skip brainstorm — provide 3-5 queries yourself (zero LLM cost):
+         aeo-tracker init --yes \
+           --brand=YOURBRAND \
+           --domain=https://yourdomain.com \
+           --keywords="query 1,query 2,query 3,query 4,query 5"
+
+    3. Hide the failing provider for this run (skip it in priority):
+         env -u OPENAI_API_KEY_DEV aeo-tracker init --yes \
+           --brand=YOURBRAND --domain=https://yourdomain.com --auto
+```
+
+**Error classification** (see `lib/providers/classify-error.js`) catches billing-error phrasings from all four providers (OpenAI "exceeded your current quota", Anthropic "credit balance is too low", Google "billing account disabled"), auth errors (401, invalid key, `invalid x-api-key`), and rate-limit (429, "resource exhausted", "rate_limit"). Non-matching errors — TypeError, SyntaxError, generic 500 — are explicitly NOT retryable, because retrying a real bug across providers would mask the root cause.
+
+**20 new tests** in `test/research-resilience.test.js` cover classification for real error strings from each provider, panel formatting edge cases (single-provider attempts, long error messages, color-off mode), and option numbering logic (Option 1 "top up" appears only when there are billing errors; Option 3 "env -u" appears only when 2+ providers were attempted).
+
+
+
+### Added — README TL;DR section
+
+New `## TL;DR` block right after the tagline: one-line positioning statement + three-command install/run chain + cost line with links to get keys + navigational hints ("never opened a terminal before?" → Path B, "want full context?" → Key facts). Appears before the detailed paragraphs so readers can decide in 5 seconds whether to keep reading or copy-paste and go.
+
+AEO-benefit: AI crawlers strongly prefer atomic first-sentence claims + structured code blocks as citable answers. The new opening sentence (*"checks whether ChatGPT, Gemini, Claude, and Perplexity mention your brand — runs locally, reads your keys from shell env"*) is phrased to match the primary user query (*"how do I check if ChatGPT mentions my brand"*) rather than generic marketing copy, which improves the chance AI engines quote it verbatim.
+
+### Added — full error-coverage matrix
+
+Expanded from provider-only classification (v0.2.2 preview) to every failure path in the tool. Three complementary layers:
+
+**1. Universal error classifier** (`lib/providers/classify-error.js`). Old `classifyProviderError` now also detects: network errors (ECONNREFUSED, ETIMEDOUT, ENOTFOUND, EAI_AGAIN via both `err.code` and regex on `.message`), bot-protection pages (Cloudflare / captcha phrases), SSL/certificate failures on user's domain, filesystem issues (EACCES, ENOSPC, EROFS, EPERM), and config-file corruption (SyntaxError on `.aeo-tracker.json`). Each category carries a `reason` + `fixHint` so downstream panels can generate actionable output without re-parsing the error.
+
+Categories split into **retryable across providers** (billing/auth/rate-limit — init's research loop walks them) and **NOT retryable** (network/filesystem/config — retrying with Gemini won't fix a broken disk). Unclassified errors fall into `other` so they bubble to the bug-report link instead of being silently swallowed.
+
+**2. `run` command: "all engines failed" panel** (`lib/errors/all-engines-failed-panel.js`). When every engine returns `mention === 'error'` (exit code 3), the command now prints a grouped breakdown: each engine with its classified reason, count of affected queries, and the env var the key was read from. Followed by option-numbered fixes: top-up links for billing failures, key-regeneration hints for auth failures, wait-and-retry for rate-limits, infra-check for network errors. Always includes a final escape hatch ("remove the failing engine from .aeo-tracker.json"). Skipped in `--json` mode so programmatic consumers still parse clean JSON.
+
+**3. Top-level global catch** in `bin/aeo-tracker.js` (wraps the entire command dispatcher). Any error that escapes the command-specific error handling — config corruption at startup, filesystem issues, unclassified edge cases, real bugs — now lands in `formatUnexpectedErrorPanel` instead of as a raw Node stack trace. The panel shows the command that crashed, a classified headline (e.g. "Network error during `aeo-tracker run`"), a truncated error message, 2-3 concrete next steps per category, and a bug-report link for `other` errors. Raw stack is still printed to stderr when `AEO_DEBUG=1` so developers can dig in.
+
+**Result:** every failure path in aeo-tracker now prints either a resolved result, a command-specific actionable panel, or (worst case) the top-level unexpected-error panel with next steps. Raw Node stack traces reach the user only in `AEO_DEBUG=1` mode.
+
+19 new tests in `test/research-resilience.test.js` cover all new categories (ECONNREFUSED via err.code, SSL, EACCES, ENOSPC, ENOENT→config, bare-SyntaxError-stays-other), plus formatters for both new panels (grouping, option numbering, truncation).
+
+### Added — per-provider interactive key prompt
+
+Previously: if `aeo-tracker init` found SOME API keys via stages 1+2 (standard names, regex heuristic) but not others, it silently proceeded with partial config — then hard-failed at `run` because the two-model extractor requires both OpenAI + Gemini. Users with partial-standard / partial-custom naming were stuck.
+
+Now: Stage 3 (interactive prompt) runs for EVERY missing provider after stages 1+2, not all-or-nothing. The old `[y/N]` gate is gone — the tool just asks directly:
+
+```
+Some API keys weren't auto-detected. Type the env var name (not the key itself):
+  OpenAI (ChatGPT) env var name (required): MY_OPENAI_KEY
+    ✓ verified (164 chars)
+  Google (Gemini) env var name (required): MY_GEMINI_VAR
+    ✓ verified (39 chars)
+  Anthropic (Claude) env var name (Enter to skip — optional):   ← Enter
+  Perplexity env var name (Enter to skip — optional):           ← Enter
+```
+
+Required providers (OpenAI + Gemini) retry up to 3 times on bad input (blank, env var not set, value too short). Optional providers (Anthropic + Perplexity) accept Enter to skip. Each confirmed name is written to `.aeo-tracker.json::providers[].env`; actual key values stay in `process.env`.
+
+**Safety against accidental key paste.** The prompt asks for the env var NAME (e.g. `MY_OPENAI_KEY`), not the key itself. If a user — under time pressure — pastes an actual key value (`sk-proj-...`, `AIzaSy...`, `sk-ant-...`, `pplx-...`), `init` detects the provider-specific prefix, rejects the input, and prints an explicit nudge: *"That looks like an API key value, not an env var name — please type the NAME of the variable that holds your key"*. The pasted value is never logged, never displayed back, never written to disk. Only the confirmed env var **name** lands in `.aeo-tracker.json::providers[].env`.
+
+Additionally, env var names themselves are validated against POSIX rules (`[A-Z_][A-Z0-9_]*`) — catches typos like dots or dashes in the name before confusing downstream errors.
+
+If all 3 attempts are exhausted for a required provider, init hard-fails with explicit guidance pointing to shell-profile setup. In CI (`--yes`), Stage 3 is skipped — the user must either use standard env var names or pre-seed `.aeo-tracker.json` with explicit `providers[].env` fields.
+
+### Changed — 0.2.1 content merged in
+
+All 0.2.1-planned changes included here. Consolidation decision: ship one larger patch instead of two smaller ones.
+
+Previously in the 0.2.1 entry:
 
 ### Added
 

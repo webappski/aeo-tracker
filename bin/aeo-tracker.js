@@ -27,6 +27,10 @@ import { classifyResponseQuality } from '../lib/report/response-quality.js';
 import { extractWithTwoModels } from '../lib/report/extract-competitors-llm.js';
 import { PROVIDER_LABELS, detectStandardKeys, heuristicKeyMatch } from '../lib/init/keys.js';
 import { detectGeography } from '../lib/init/fetch-site.js';
+import { classifyProviderError } from '../lib/providers/classify-error.js';
+import { formatResearchFailurePanel } from '../lib/init/research-failure-panel.js';
+import { formatAllEnginesFailedPanel } from '../lib/errors/all-engines-failed-panel.js';
+import { formatUnexpectedErrorPanel } from '../lib/errors/unexpected-error-panel.js';
 
 /**
  * Safely extract a human-readable message from any caught value.
@@ -217,31 +221,49 @@ async function _resolveReplaySource(explicitDate) {
 }
 
 /**
- * Build { primary, validator } for the research pipeline.
+ * Build a resolved provider descriptor ready for research/brainstorm calls.
+ * @param {string} name              Provider key — 'openai' | 'anthropic' | 'gemini'
+ * @param {string} envVarName        The env var name holding the API key
+ */
+async function makeResearchProvider(name, envVarName) {
+  const callFn = (await import(PROVIDER_MODULES[name]))[PROVIDER_CALL_FN[name]];
+  return {
+    name,
+    providerCall: callFn,
+    apiKey: process.env[envVarName],
+    model: SUGGEST_MODELS[name],
+    label: PROVIDER_LABELS[name],
+  };
+}
+
+/**
+ * List all available research providers in PROVIDER_PRIORITY order. The retry
+ * loop in init walks this array on billing/auth/rate-limit errors — first
+ * provider that returns a successful research result wins; if all fail, the
+ * actionable error panel enumerates what was tried.
+ * @param {Object} providerKeyMap  { providerName: envVarName } — any subset
+ * @returns {Promise<Array>} zero or more provider descriptors in priority order
+ */
+async function listResearchProviders(providerKeyMap) {
+  const hasKey = (name) => providerKeyMap[name] && process.env[providerKeyMap[name]];
+  const available = PROVIDER_PRIORITY.filter(hasKey);
+  return Promise.all(available.map(name => makeResearchProvider(name, providerKeyMap[name])));
+}
+
+/**
+ * Build { primary, validator } for the research pipeline. Backwards-compatible
+ * wrapper over listResearchProviders — picks first as primary, second as
+ * cross-model validator. Used by validation paths that don't need retry logic
+ * (they're already defensive via runValidationFlow).
  * @param {Object} providerKeyMap  { providerName: envVarName } — any subset of providers
  * Returns { primary: null } if no key is available in the environment.
  */
 async function buildResearchProviders(providerKeyMap) {
-  const hasKey = (name) => providerKeyMap[name] && process.env[providerKeyMap[name]];
-
-  const primaryName = PROVIDER_PRIORITY.find(hasKey);
-  if (!primaryName) return { primary: null, validator: null };
-
-  const mk = async (name) => {
-    const callFn = (await import(PROVIDER_MODULES[name]))[PROVIDER_CALL_FN[name]];
-    return {
-      name,
-      providerCall: callFn,
-      apiKey: process.env[providerKeyMap[name]],
-      model: SUGGEST_MODELS[name],
-      label: PROVIDER_LABELS[name],
-    };
+  const providers = await listResearchProviders(providerKeyMap);
+  return {
+    primary: providers[0] || null,
+    validator: providers[1] || null,
   };
-
-  const primary = await mk(primaryName);
-  const validatorName = PROVIDER_PRIORITY.find(p => p !== primaryName && hasKey(p));
-  const validator = validatorName ? await mk(validatorName) : null;
-  return { primary, validator };
 }
 
 /**
@@ -575,31 +597,97 @@ async function cmdInit(opts = {}) {
     }
   }
 
-  // Step 3 — ask directly (interactive only)
-  if (Object.keys(providerKey).length === 0 && !nonInteractive) {
-    console.log(`\n${c.yellow}No API keys auto-detected.${c.reset}`);
-    const byHand = (await ask(`Do you have API keys under custom env var names? [y/N] `, 'n')).trim();
-    if (/^y/i.test(byHand)) {
-      for (const p of Object.keys(PROVIDER_LABELS)) {
-        const name = (await ask(`  ${PROVIDER_LABELS[p]} env var name (Enter to skip): `, '')).trim();
-        if (!name) continue;
-        if (!process.env[name]) {
-          console.log(`    ${c.red}✗ ${name} not set in environment${c.reset}`);
-        } else {
-          providerKey[p] = name;
-          console.log(`    ${c.green}✓ verified (${process.env[name].length} chars)${c.reset}`);
+  // Step 3 — interactive per-provider fallback for anything stages 1+2 missed.
+  // Runs even when SOME providers were found — so a user with OpenAI under the
+  // standard name + Gemini under a non-matching custom name is still prompted for
+  // the missing required provider (instead of silently proceeding → hard-failing
+  // later at `run` because the two-model extractor can't start).
+  const REQUIRED_PROVIDERS = ['openai', 'gemini'];
+  const OPTIONAL_PROVIDERS = ['anthropic', 'perplexity'];
+  const MAX_ATTEMPTS = 3;
+
+  // Detect when a user pastes an ACTUAL API key instead of an env var NAME.
+  // This is the most common confusion — the prompt says "env var name" but
+  // someone under time pressure just pastes what's in their clipboard.
+  // All major AI providers use recognisable prefixes for their key values.
+  const looksLikeActualKey = (s) =>
+    /^(sk-[a-z]|AIzaSy|sk-ant-|pplx-|ya29\.|gsk_)/i.test(s);
+
+  const verifyEnvVar = (name) => {
+    // Safety: user pasted the KEY VALUE instead of the env var NAME.
+    // Never log the value; just nudge them toward the correct input.
+    if (looksLikeActualKey(name)) {
+      return {
+        ok: false,
+        reason: `that looks like an API key value, not an env var name. Please type the NAME of the variable that holds your key (e.g. OPENAI_API_KEY or MY_OPENAI_KEY) — your actual key stays in your shell env, aeo-tracker only needs to know which variable to read`,
+      };
+    }
+    // Env var names must be [A-Z_][A-Z0-9_]* (POSIX). Detect invalid chars early.
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      return { ok: false, reason: `"${name}" isn't a valid env var name — names can only contain letters, digits, and underscores, and cannot start with a digit` };
+    }
+    const value = process.env[name];
+    if (value === undefined) return { ok: false, reason: `$${name} is not set in your shell — check the name (case-sensitive) or set the variable first via ~/.zshrc` };
+    if (value.length < 20) return { ok: false, reason: `$${name} is set, but the value is too short (${value.length} chars) — real API keys are 40+ chars, so this looks like a typo` };
+    return { ok: true, length: value.length };
+  };
+
+  if (!nonInteractive) {
+    const missingRequired = REQUIRED_PROVIDERS.filter(p => !providerKey[p]);
+    const missingOptional = OPTIONAL_PROVIDERS.filter(p => !providerKey[p]);
+
+    if (missingRequired.length > 0 || missingOptional.length > 0) {
+      console.log(`\n${c.yellow}Some API keys weren't auto-detected. Type the env var name (not the key itself) — or Enter to skip optional providers:${c.reset}`);
+    }
+
+    // Required: loop until entered OR attempts exhausted.
+    for (const p of missingRequired) {
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS && !providerKey[p]; attempt++) {
+        const tag = attempt === 1 ? '(required)' : `(required, attempt ${attempt}/${MAX_ATTEMPTS})`;
+        const name = (await ask(`  ${PROVIDER_LABELS[p]} env var name ${tag}: `, '')).trim();
+        if (!name) {
+          console.log(`    ${c.yellow}⚠ ${PROVIDER_LABELS[p]} cannot be skipped — it's required for the two-model competitor extractor.${c.reset}`);
+          continue;
         }
+        const v = verifyEnvVar(name);
+        if (!v.ok) {
+          console.log(`    ${c.red}✗ ${name}: ${v.reason}${c.reset}`);
+          continue;
+        }
+        providerKey[p] = name;
+        console.log(`    ${c.green}✓ verified (${v.length} chars)${c.reset}`);
       }
+    }
+
+    // Optional: one shot per provider, Enter to skip.
+    for (const p of missingOptional) {
+      const name = (await ask(`  ${PROVIDER_LABELS[p]} env var name (Enter to skip — optional): `, '')).trim();
+      if (!name) continue;
+      const v = verifyEnvVar(name);
+      if (!v.ok) {
+        console.log(`    ${c.yellow}⚠ ${name}: ${v.reason} — skipping ${PROVIDER_LABELS[p]}${c.reset}`);
+        continue;
+      }
+      providerKey[p] = name;
+      console.log(`    ${c.green}✓ verified (${v.length} chars)${c.reset}`);
     }
   }
 
-  if (Object.keys(providerKey).length === 0) {
-    console.log(`\n${c.red}No verified API keys. Cannot proceed.${c.reset}`);
-    console.log(`Get a free key (takes 2 minutes):`);
-    console.log(`  OpenAI:     https://platform.openai.com/api-keys`);
-    console.log(`  Anthropic:  https://console.anthropic.com/settings/keys`);
-    console.log(`  Google AI:  https://aistudio.google.com/apikey`);
-    console.log(`\nAdd to ~/.zshrc:\n  export OPENAI_API_KEY=sk-...\nThen: source ~/.zshrc && aeo-tracker init\n`);
+  // Hard-fail if any REQUIRED provider is still missing after all stages.
+  // In interactive mode this triggers only if user exhausted attempts or left
+  // blank every time. In non-interactive mode it triggers if stages 1+2 didn't
+  // find the key (Step 3 is skipped).
+  const stillMissingRequired = REQUIRED_PROVIDERS.filter(p => !providerKey[p]);
+  if (stillMissingRequired.length > 0) {
+    console.log(`\n${c.red}Missing required keys: ${stillMissingRequired.map(p => PROVIDER_LABELS[p]).join(', ')}${c.reset}`);
+    console.log(`aeo-tracker requires BOTH OpenAI and Gemini keys — they power the two-model competitor extractor in addition to being engine columns in the report.`);
+    console.log(`\nGet them (2 minutes):`);
+    console.log(`  OpenAI: https://platform.openai.com/api-keys`);
+    console.log(`  Gemini: https://aistudio.google.com/apikey`);
+    console.log(`\nAdd to ~/.zshrc (or equivalent):`);
+    console.log(`  export OPENAI_API_KEY=sk-proj-...`);
+    console.log(`  export GEMINI_API_KEY=AIzaSy...`);
+    console.log(`Then: source ~/.zshrc && aeo-tracker init\n`);
     closeRl();
     process.exit(1);
   }
@@ -638,15 +726,20 @@ async function cmdInit(opts = {}) {
   }
 
   if (mode === 'auto') {
-    const { primary, validator: autoValidator } = await buildResearchProviders(providerKey);
-    if (!primary) {
+    const researchProviders = await listResearchProviders(providerKey);
+    if (researchProviders.length === 0) {
       console.log(`${c.yellow}No LLM-capable provider configured (need OpenAI, Anthropic, or Gemini). Falling back to manual.${c.reset}`);
     } else {
+      const primaryForDisplay = researchProviders[0];
       // P1.6: privacy reassurance
       console.log(`\n${c.bold}Auto-suggest will:${c.reset}`);
       console.log(`  1. Fetch ${fullUrl} from your machine`);
       console.log(`  2. Extract title, meta, headings, first 2KB of body text`);
-      console.log(`  3. Send that excerpt to ${primary.label} (${primary.model}) via YOUR API key`);
+      console.log(`  3. Send that excerpt to ${primaryForDisplay.label} (${primaryForDisplay.model}) via YOUR API key`);
+      if (researchProviders.length > 1) {
+        const fallbacks = researchProviders.slice(1).map(p => p.label).join(', ');
+        console.log(`     ${c.dim}(falls back to ${fallbacks} if the primary provider has a billing/auth/rate-limit issue)${c.reset}`);
+      }
       console.log(`  4. Show you the suggested queries + competitors before saving`);
       console.log(`  ${c.dim}Your API key never leaves this machine. No telemetry. No analytics. No traffic to webappski.com.${c.reset}`);
       const go = (nonInteractive ? 'y' : (await ask(`Continue? [Y/n] `, 'y'))).trim();
@@ -701,82 +794,155 @@ async function cmdInit(opts = {}) {
           if (audienceTags.length > 0) console.log(`${c.dim}  Detected audience: ${audienceTags.join(', ')}${c.reset}`);
           if (geoTags.length > 0) console.log(`${c.dim}  Detected geography: ${geoTags.join(', ')}${c.reset}`);
 
-          // primary and validator already resolved via buildResearchProviders above
-          const validator = autoValidator;
-          if (!validator) {
-            console.log(`${c.yellow}  ⚠ Cross-model validation skipped — only one LLM provider available (single-model bias risk).${c.reset}`);
+          // LLM retry loop: walk researchProviders in priority order. Success
+          // on any provider sets `llmSucceeded = true` and exits the loop.
+          // Billing/auth/rate-limit errors are logged and we try the next
+          // provider. Non-retryable errors (real bugs, malformed requests)
+          // bubble to the outer catch so they're not silently swallowed.
+          const attempts = [];
+          let llmSucceeded = false;
+
+          for (let i = 0; i < researchProviders.length; i++) {
+            const primary = researchProviders[i];
+            const validator = researchProviders.find((_, j) => j !== i) || null;
+
+            if (i === 0 && !validator) {
+              console.log(`${c.yellow}  ⚠ Cross-model validation skipped — only one LLM provider available (single-model bias risk).${c.reset}`);
+            }
+            if (i > 0) {
+              console.log(`${c.dim}  Retrying brainstorm with ${primary.label}...${c.reset}`);
+            }
+
+            try {
+              // --light flag: fall back to v0.4.x single-shot suggest (faster, cheaper, less thorough)
+              if (opts.light) {
+                const { suggestConfig, detectAmbiguousQueries } = await import('../lib/init/suggest.js');
+                if (i === 0) console.log(`${c.dim}  [light mode] single-shot suggest — no brainstorm, no validation${c.reset}`);
+                const s = await suggestConfig({
+                  brand, domain, site, categoryDescription,
+                  providerCall: (p, k, m) => primary.providerCall(p, k, m, { webSearch: false }),
+                  apiKey: primary.apiKey, model: primary.model,
+                  onAttempt: ({ estimate }) => console.log(`${c.dim}  Asking ${primary.label}... (~$${estimate.usd.toFixed(4)})${c.reset}`),
+                });
+                queries = s.queries;
+                suggestionLang = s.language || site.lang;
+                const ambiguous = detectAmbiguousQueries(queries);
+                if (ambiguous.length > 0) {
+                  console.log(`${c.yellow}  ⚠ ${ambiguous.length} ambiguous acronyms detected — consider --auto (full research) next time${c.reset}`);
+                }
+              } else {
+                // Full research pipeline (v0.5 default)
+                const { research } = await import('../lib/init/research/research.js');
+                const { selectTopThree, formatSelection } = await import('../lib/init/research/select.js');
+
+                if (i === 0) console.log(`${c.dim}  [full pipeline] brainstorm → filter → score → cross-model validate${c.reset}`);
+                const t0 = Date.now();
+                const researchResult = await research({
+                  brand, domain, site, category: categoryDescription,
+                  audienceTags, geoTags,
+                  primary, validator,
+                  logPhase: ({ phase, status, details }) => {
+                    const parts = [`${c.dim}  [${phase}]`, status];
+                    if (details?.count !== undefined) parts.push(`(${details.count})`);
+                    if (details?.kept !== undefined) parts.push(`kept=${details.kept} rejected=${details.rejected}`);
+                    if (details?.topScore !== undefined) parts.push(`topScore=${details.topScore}`);
+                    if (details?.validator) parts.push(`via ${details.validator}`);
+                    if (details?.passed !== undefined) parts.push(`passed=${details.passed} rejected=${details.rejected ?? details.failed}`);
+                    if (details?.reason) parts.push(`— ${details.reason}`);
+                    console.log(parts.join(' ') + c.reset);
+
+                  },
+                });
+                const selectResult = selectTopThree(researchResult.candidates, { validationSkipped: !validator });
+                const elapsed = Date.now() - t0;
+
+                console.log(`\n${c.dim}  pipeline complete in ${elapsed}ms, est cost ~$${researchResult.trace.estimatedCostUsd.toFixed(4)}${c.reset}\n`);
+
+                // Display selected + alternatives
+                for (const line of formatSelection(selectResult)) console.log(line);
+
+                const accept = (nonInteractive ? 'y' : (await ask(`\nAccept selected queries? [Y]es / [e]dit / [n]o: `, 'y'))).trim();
+                if (/^e/i.test(accept)) {
+                  const edited = [];
+                  for (let j = 0; j < selectResult.selected.length; j++) {
+                    const cand = selectResult.selected[j].candidate;
+                    const v = (await ask(`  Q${j + 1} [${cand.text}]: `, cand.text)).trim();
+                    edited.push(v || cand.text);
+                  }
+                  queries = edited;
+                } else if (!/^n/i.test(accept)) {
+                  queries = selectResult.selected.map(s => s.candidate.text);
+                }
+
+                // Persist candidate pool for future swap-without-LLM (D3)
+                if (selectResult.alternatives.length > 0) {
+                  config_candidatePool = selectResult.alternatives.slice(0, 5).map(a => ({
+                    text: a.text, intent: a.intent, score: a.score,
+                    unverified: !!a.unverified,
+                  }));
+                }
+                suggestionLang = site.lang || 'en';
+              }
+
+              llmSucceeded = true;
+              break;
+            } catch (llmErr) {
+              const classified = classifyProviderError(llmErr);
+              attempts.push({
+                provider: primary.name,
+                label: primary.label,
+                envVar: providerKey[primary.name] || null,
+                rawError: errMsg(llmErr),
+                classified,
+              });
+
+              if (!classified.retryable) {
+                // Not a billing/auth/rate-limit issue — this is a real bug.
+                // Surface the full context (which providers we tried first,
+                // and why each failed) BEFORE rethrowing, so the user sees
+                // the same actionable panel they'd see for all-retryable
+                // failures — just followed by the raw bug for the developer
+                // to file. Previously this block dropped `attempts` on the
+                // floor and the user saw only the final TypeError.
+                if (attempts.length > 1) {
+                  for (const line of formatResearchFailurePanel({
+                    attempts, brand, domain: fullUrl, useColor: USE_COLOR,
+                  })) {
+                    console.log(line);
+                  }
+                  console.log(`${c.dim}  The last attempt above (${primary.label}) failed with an unclassified error that's likely a bug in aeo-tracker. Raw message follows.${c.reset}`);
+                  console.log('');
+                }
+                throw llmErr;
+              }
+
+              console.log(`${c.yellow}  ${primary.label} failed: ${classified.reason}${c.reset}`);
+              if (i < researchProviders.length - 1) {
+                console.log(`${c.dim}  Trying next provider in priority order...${c.reset}`);
+              }
+            }
           }
 
-          // --light flag: fall back to v0.4.x single-shot suggest (faster, cheaper, less thorough)
-          if (opts.light) {
-            const { suggestConfig, detectAmbiguousQueries } = await import('../lib/init/suggest.js');
-            console.log(`${c.dim}  [light mode] single-shot suggest — no brainstorm, no validation${c.reset}`);
-            const s = await suggestConfig({
-              brand, domain, site, categoryDescription,
-              providerCall: (p, k, m) => primary.providerCall(p, k, m, { webSearch: false }),
-              apiKey: primary.apiKey, model: primary.model,
-              onAttempt: ({ estimate }) => console.log(`${c.dim}  Asking ${primary.label}... (~$${estimate.usd.toFixed(4)})${c.reset}`),
-            });
-            queries = s.queries;
-            suggestionLang = s.language || site.lang;
-            const ambiguous = detectAmbiguousQueries(queries);
-            if (ambiguous.length > 0) {
-              console.log(`${c.yellow}  ⚠ ${ambiguous.length} ambiguous acronyms detected — consider --auto (full research) next time${c.reset}`);
+          if (!llmSucceeded) {
+            // Every research provider returned a billing/auth/rate-limit error.
+            // Show the actionable panel so the user has a copy-pastable path
+            // to success instead of a bare "aborting" message.
+            for (const line of formatResearchFailurePanel({
+              attempts, brand, domain: fullUrl, useColor: USE_COLOR,
+            })) {
+              console.log(line);
             }
-          } else {
-            // Full research pipeline (v0.5 default)
-            const { research } = await import('../lib/init/research/research.js');
-            const { selectTopThree, formatSelection } = await import('../lib/init/research/select.js');
-
-            console.log(`${c.dim}  [full pipeline] brainstorm → filter → score → cross-model validate${c.reset}`);
-            const t0 = Date.now();
-            const researchResult = await research({
-              brand, domain, site, category: categoryDescription,
-              audienceTags, geoTags,
-              primary, validator,
-              logPhase: ({ phase, status, details }) => {
-                const parts = [`${c.dim}  [${phase}]`, status];
-                if (details?.count !== undefined) parts.push(`(${details.count})`);
-                if (details?.kept !== undefined) parts.push(`kept=${details.kept} rejected=${details.rejected}`);
-                if (details?.topScore !== undefined) parts.push(`topScore=${details.topScore}`);
-                if (details?.validator) parts.push(`via ${details.validator}`);
-                if (details?.passed !== undefined) parts.push(`passed=${details.passed} rejected=${details.rejected ?? details.failed}`);
-                if (details?.reason) parts.push(`— ${details.reason}`);
-                console.log(parts.join(' ') + c.reset);
-
-              },
-            });
-            const selectResult = selectTopThree(researchResult.candidates, { validationSkipped: !validator });
-            const elapsed = Date.now() - t0;
-
-            console.log(`\n${c.dim}  pipeline complete in ${elapsed}ms, est cost ~$${researchResult.trace.estimatedCostUsd.toFixed(4)}${c.reset}\n`);
-
-            // Display selected + alternatives
-            for (const line of formatSelection(selectResult)) console.log(line);
-
-            const accept = (nonInteractive ? 'y' : (await ask(`\nAccept selected queries? [Y]es / [e]dit / [n]o: `, 'y'))).trim();
-            if (/^e/i.test(accept)) {
-              const edited = [];
-              for (let i = 0; i < selectResult.selected.length; i++) {
-                const cand = selectResult.selected[i].candidate;
-                const v = (await ask(`  Q${i + 1} [${cand.text}]: `, cand.text)).trim();
-                edited.push(v || cand.text);
-              }
-              queries = edited;
-            } else if (!/^n/i.test(accept)) {
-              queries = selectResult.selected.map(s => s.candidate.text);
+            if (nonInteractive) {
+              console.error(`${c.red}Non-interactive mode — cannot prompt for manual input. Aborting.${c.reset}`);
+              closeRl();
+              process.exit(1);
             }
-
-            // Persist candidate pool for future swap-without-LLM (D3)
-            if (selectResult.alternatives.length > 0) {
-              config_candidatePool = selectResult.alternatives.slice(0, 5).map(a => ({
-                text: a.text, intent: a.intent, score: a.score,
-                unverified: !!a.unverified,
-              }));
-            }
-            suggestionLang = site.lang || 'en';
+            console.log(`${c.dim}  Falling back to manual input.${c.reset}`);
           }
         } catch (err) {
+          // Non-retryable errors from LLM loop (real bugs) OR errors from the
+          // fetch/parse/category steps above. Both land here; we show the same
+          // message, since it's a hard failure either way.
           console.log(`${c.yellow}  Auto-suggest failed: ${errMsg(err)}${c.reset}`);
           if (nonInteractive) {
             console.error(`${c.red}Cannot fall back to manual in non-interactive mode. Aborting.${c.reset}`);
@@ -1320,6 +1486,22 @@ async function cmdRun(options = {}) {
     exitCode = 1;
   } else {
     exitCode = 0;
+  }
+
+  // Exit code 3: every engine returned mention === 'error'. Show the
+  // actionable panel so the user has copy-pastable fixes instead of exiting
+  // silently with just a non-zero status code. Skipped in --json mode
+  // because JSON consumers parse stdout programmatically — the exitCode +
+  // per-result .error fields in the JSON already tell them everything.
+  if (exitCode === 3 && !silent) {
+    const errorResults = results.filter(r => r.mention === 'error');
+    for (const line of formatAllEnginesFailedPanel({
+      errorResults,
+      providerConfig: config.providers || {},
+      useColor: USE_COLOR,
+    })) {
+      console.error(line);
+    }
   }
 
   if (silent) {
@@ -2528,6 +2710,11 @@ ${c.bold}Environment variables:${c.reset}
   ${c.bold}Optional${c.reset} (each adds one engine column to the report):
     ANTHROPIC_API_KEY        Anthropic API key (Claude column)
     PERPLEXITY_API_KEY       Perplexity API key (Perplexity column)
+  ${c.bold}Debug${c.reset}:
+    AEO_DEBUG=1              Print raw stack traces alongside actionable panels
+                             (for bug reports — see github.com/DVdmitry/aeo-tracker/issues)
+    NO_COLOR=1               Strip ANSI escape codes from output (auto-detected
+                             on non-TTY; set explicitly in CI logs if you see garbage)
 
 ${c.bold}Quick start:${c.reset}
   export OPENAI_API_KEY=sk-...        # required
@@ -2577,33 +2764,51 @@ const { values, positionals } = parseArgs({
 });
 const command = positionals[0];
 
-if (values.help || (!command && !values.version)) {
-  console.log(HELP);
-} else if (values.version) {
-  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf-8'));
-  console.log(pkg.version);
-} else if (command === 'init') {
-  await cmdInit({ ...values, strictValidation: values['strict-validation'] });
-} else if (command === 'run') {
-  await cmdRun({
-    json: values.json,
-    force: values.force,
-    strictValidation: values['strict-validation'],
-    // Replay mode (see replay-mode block at top of file)
-    replay: values.replay,
-    replayFrom: values['replay-from'],
-    // End replay
-  });
-} else if (command === 'run-manual') {
-  await cmdRunManual(process.argv.slice(3));
-} else if (command === 'diff') {
-  await cmdDiff(process.argv.slice(3));
-} else if (command === 'report') {
-  await cmdReport({ output: values.output, noOpen: values['no-open'], html: values.html });
-} else if (command === 'preview') {
-  await cmdPreview({ input: values.output });
-} else {
-  console.error(`${c.red}Unknown command: ${command}${c.reset}`);
-  console.log(HELP);
+// Top-level dispatcher wrapped in try/catch. Any error that escapes the
+// command-specific error handling (config corruption, filesystem issues,
+// unclassified provider edge cases, real bugs) lands here — formatUnexpectedErrorPanel
+// turns the raw stack into an actionable panel before exiting with code 1.
+// Exceptions: process.exit() from inside a command won't trigger this catch
+// (that's intentional — the command already handled its own exit).
+try {
+  if (values.help || (!command && !values.version)) {
+    console.log(HELP);
+  } else if (values.version) {
+    const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf-8'));
+    console.log(pkg.version);
+  } else if (command === 'init') {
+    await cmdInit({ ...values, strictValidation: values['strict-validation'] });
+  } else if (command === 'run') {
+    await cmdRun({
+      json: values.json,
+      force: values.force,
+      strictValidation: values['strict-validation'],
+      // Replay mode (see replay-mode block at top of file)
+      replay: values.replay,
+      replayFrom: values['replay-from'],
+      // End replay
+    });
+  } else if (command === 'run-manual') {
+    await cmdRunManual(process.argv.slice(3));
+  } else if (command === 'diff') {
+    await cmdDiff(process.argv.slice(3));
+  } else if (command === 'report') {
+    await cmdReport({ output: values.output, noOpen: values['no-open'], html: values.html });
+  } else if (command === 'preview') {
+    await cmdPreview({ input: values.output });
+  } else {
+    console.error(`${c.red}Unknown command: ${command}${c.reset}`);
+    console.log(HELP);
+    process.exit(1);
+  }
+} catch (err) {
+  for (const line of formatUnexpectedErrorPanel({ err, command, useColor: USE_COLOR })) {
+    console.error(line);
+  }
+  // Emit raw stack to stderr for debugging when requested — keeps the panel
+  // clean by default, but doesn't hide the stack from developers who need it.
+  if (process.env.AEO_DEBUG === '1' && err instanceof Error && err.stack) {
+    console.error(err.stack);
+  }
   process.exit(1);
 }
