@@ -946,6 +946,17 @@ For the full version history (keyword research pipeline, manual paste mode, `dif
 
 ---
 
+## Case studies
+
+Real-world weekly runs where you can read both the numbers and the founder's interpretation:
+
+- **TypelessForm — 33/100, week 5 of launch** — full breakdown of why ChatGPT and Gemini land 1/3 each, why Claude is 0/3, and which canonical sources the engines cite instead. Includes all five report screenshots. <https://typelessform.com/blog/free-open-source-aeo-tracker>
+- **Same write-up cross-posted on dev.to** for developers who want the JS extractor code inline rather than the long-form narrative: <https://dev.to/alexisa/free-open-source-aeo-tracker-our-real-score-was-33100-258i>
+
+If you publish a run on your own brand, open a PR adding it here — case studies are the most useful documentation this README has.
+
+---
+
 ## Behind this tool
 
 We built `aeo-tracker` because the existing tools didn't tell us the truth. HubSpot's AEO Grader scored Webappski at 28–44/100 the same week direct API tests showed **zero mentions** across every engine. We needed something honest, so we made it — and we run it on our own brand every Monday morning.
