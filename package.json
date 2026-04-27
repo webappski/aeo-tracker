@@ -1,6 +1,6 @@
 {
   "name": "@webappski/aeo-tracker",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Open-source CLI for tracking brand visibility across AI answer engines (ChatGPT, Gemini, Claude, Perplexity). Smart init auto-suggests queries from your site, retries across providers on billing/auth/rate-limit errors, auto-recovers from validator blocks by swapping in validated alternatives (intent-diversity ranking), and shows a live TTY spinner during long pipeline phases. Actionable error panels on every failure path — top-up links, regenerate-key hints, --keywords escape hatch — instead of raw Node stack traces. Includes diff reports, manual paste mode for browser-only engines, competitor tracking, canonical source extraction, and markdown reports with inline SVG charts. Direct API calls — no third-party dashboards, no inflated scores. Zero runtime dependencies.",
   "type": "module",
   "bin": {
