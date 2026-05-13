@@ -304,42 +304,50 @@
   transition:box-shadow .15s ease, background .15s ease;
 }
 .fk-hover::after{
-  /* footnote-style affordance below the node — readable, not a marketing pill */
-  content:"↓ details · hover";
+  /* `?` chip anchored INSIDE the box — attaches affordance to the card itself,
+     no orphan text below. Works on hover (desktop) AND tap (mobile, via the
+     parent <button>'s aria-haspopup + JS tap-toggle in bridgeJs). */
+  content:"?";
   position:absolute;
-  bottom:-26px;
-  right:0;
+  top:8px; right:8px;
+  width:20px; height:20px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
   font-family:var(--mono);
-  font-weight:600;
-  font-size:11.5px;
-  letter-spacing:.06em;
-  text-transform:lowercase;
-  color:var(--ink-2);
-  opacity:.9;
-  transition:opacity .15s ease, color .15s ease, transform .15s ease;
-  pointer-events:none;
+  font-weight:700;
+  font-size:11px;
   line-height:1;
+  border-radius:50%;
+  background:var(--paper);
+  border:1px solid var(--ink-3);
+  color:var(--ink-2);
+  box-shadow:0 1px 2px rgba(26,22,16,0.08);
+  transition:transform .15s ease, background .15s ease, border-color .15s ease, color .15s ease;
+  pointer-events:none;
 }
 .fk-hover-cur::after{
+  border-color:var(--accent);
   color:var(--accent);
-  opacity:.85;
-}
-.fk-hover:hover::after, .fk-hover:focus-visible::after{
-  opacity:1;
 }
 .fk-hover:hover, .fk-hover:focus-visible{
   background:rgba(184,92,22,0.06);
   box-shadow:0 0 0 1px rgba(184,92,22,0.25);
 }
 .fk-hover:hover::after, .fk-hover:focus-visible::after{
-  transform:scale(1.06);
+  background:var(--accent);
+  color:var(--paper);
+  border-color:var(--accent);
+  transform:scale(1.1);
 }
 
 /* hover-zone positions — % of stage, mirrors SVG viewBox 1000×280.
-   Box geometry: DIY end-node at (815,60) size 168×48; Curated at (815,220) size 192×78.
-   Heights include ~26px caption below the box. */
-.fk-hover-diy{ left:73.10%; top:12.86%; width:16.80%; height:26.43%; }
-.fk-hover-cur{ left:71.90%; top:64.64%; width:19.20%; height:35.00%; }
+   Box geometry (post-redesign): DIY end-node at translate(815,60), Curated at
+   translate(815,220); both rects -128 -44 width 256 height 88.
+   Bounds in viewBox units: left 687, top 16/176, width 256, height 88.
+   Caption + pills are INSIDE each box (no extra padding below). */
+.fk-hover-diy{ left:68.70%; top:5.71%;  width:25.60%; height:31.43%; }
+.fk-hover-cur{ left:68.70%; top:62.86%; width:25.60%; height:31.43%; }
 
 /* Tooltip card */
 .fk-tip{

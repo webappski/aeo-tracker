@@ -4,21 +4,80 @@ All notable changes to `@webappski/aeo-tracker`.
 
 ## [0.3.1] — 2026-05-13
 
-Documentation hotfix on top of v0.3.0. **No code changes.** Independent persona review (solo founder / agency operator / B2B SaaS lead) flagged docs-vs-reality drift in v0.3.0; this release closes the gap.
+Patch release on top of v0.3.0. Two themes: (a) closing the docs-vs-reality drift flagged by an independent persona review (solo founder / agency operator / B2B SaaS lead) — outreach kill-switch was documented as a working feature in 5+ places; (b) fixing a real dogfooding bug where AI suggested the user pitch their own brand, plus surfacing the UVI sub-components for clients consuming `_summary.json` directly. **No breaking changes** — CLI surface unchanged, config schema unchanged, `_summary.json` schema additively extended (consumers reading 0.3.0 fields still work).
+
+### Fixed — own-domain pitching bug (real dogfooding regression)
+
+A run on `typelessform.com` had `topCanonicalSources[]` led by the user's own domain (because AI engines already cite their pages). Without filtering, four downstream surfaces targeted that own domain for outreach:
+1. «Actionable Gaps» «What to do» column → *"Get listed on typelessform.com"*
+2. «Where to get mentioned» table → first row was typelessform.com
+3. «Outreach Email Templates» → drafted *"Hi Typeless Form team"* email
+4. «Actions this week» → *"Pitch a guest post on typelessform.com"*
+
+All four surfaces now filter own-domain (incl. www-prefix and any subdomain). Centralised in a new shared module so the four call-sites use the same canonicalisation + subdomain-spoof guard (`foo.com.evil.com` is **not** treated as a subdomain of `foo.com`).
+
+- New module: `lib/report/own-domain.js` — pure helpers `normaliseOwnDomain(host)` and `isOwnDomain(host, ownDomain)`. Handles scheme strip / `www.` strip / trailing slash / path / query / fragment / port. 30 unit tests in `test/own-domain.test.js` including the spoof guard.
+- New helper `outreach-templates.js::filterOwnDomainFromTopDomains` — drops own-domain before drafting outreach.
+- New helper `sections.js::topCitedHostsForProvider(results, provider, ownDomain, …)` — provider-aware top-host extractor that respects own-domain.
+- New helper `sections.js::isDenyListedOutreachHost` — deny-list for hosts that should never be outreach targets (review platforms, search engines, social — additional to own-domain).
+- `bin/aeo-tracker.js` post-run summary now uses `externalSources` instead of raw `topCanonicalSources` when surfacing pitch targets to the operator.
+
+### Added — UVI sub-components in `_summary.json::scores`
+
+Previously, `_summary.json::scores` exposed only `uvi` (composite 0–100). Consumers reading `_summary.json` directly (BI pipelines, paste-into-AI brand-context block, downstream dashboards) had no way to see *why* a UVI moved between runs. Now `scores` additively exposes:
+
+- `presence`, `sentiment`, `rank`, `citation` — the 4 sub-components UVI is computed from (each 0–100).
+- `sample`, `sentimentSample`, `rankSample` — denominators used to compute each sub-component, so consumers can tell a sub-score apart from "not enough data yet" cases.
+- `scores.perEngine[].{presence, sentiment, rank, citation}` — same breakdown per engine, so the paste-into-AI 30-mission plan generator can ground recommendations in which engine is the weakest on which axis.
+
+Schema change is **additive only**. 0.3.0 consumers that read `scores.uvi` keep working without changes. New fields are computed inside `lib/report/mc-metadata.js::scores()` using helpers from `lib/report/visibility-index.js`.
+
+### Added — sections.js refinements
+
+- `sectionBaseline()` — placeholder section for the first run, when historical comparisons can't be computed yet. Surfaces "what to expect next week" instead of empty blocks.
+- `trendNotYetPlaceholder(runCount)` — friendlier copy when the 8-week trend chart can't render (auto-replaces stale "Flat at zero" placeholder).
+- `splitUtmByOrigin(utm)` — separates UTM citations into own-domain vs external buckets so the UTM section doesn't conflate "your link got cited" with "someone else's link got cited".
+- `isSignalBearingSentiment(s)` (in `lib/report/visibility-index.js`) — guards UVI sentiment sub-component against `null` / `'unknown'` sentiment labels that would otherwise pollute the average.
+
+### Added — coverage tests for previously-untested surfaces
+
+7 new test files (~600 LOC), all green on `npm test`:
+
+- `test/own-domain.test.js` — 30 unit tests for the new pure helpers, including subdomain-spoof safety.
+- `test/diff.test.js` — `lib/diff.js` delta computation.
+- `test/sections-recommendations.test.js` — actions section grounded in real data fields.
+- `test/sections-copy.test.js` — guards against stale or misleading prose in section renderers.
+- `test/sections-data-integrity.test.js` — verifies sections never reference undefined `summary.*` fields.
+- `test/report-empty-blocks.test.js` — verifies empty-block placeholders render without crashing on first-run data.
+- `test/mc-metadata-scores.test.js` — guards the new sub-component schema (regression test for the additive expansion).
 
 ### Fixed — documentation drift
 
 - **Outreach kill-switch disclosure.** The outreach-template generator caches drafts in `_summary.json::outreachTemplates` but rendering in HTML + Markdown is muted via kill-switch (`html.js:367`, `markdown.js:84`) — see note under [0.3.0] below. **0.3.0 README documented the feature in 5+ places without warning the user about the muted rendering, including a screenshot caption claiming to show outreach-draft cards that no fresh install can produce.** README §04 Citations now carries a yellow callout explaining the kill-switch and the workaround (pitch top-3 domains by hand using citation context). README §04 Citations tail screenshot caption flagged with "rendering muted in 0.3.x" qualifier. Re-enables in 0.3.1+ once the publisher / competitor / community domain-type classifier ships.
 - **Hero example replaced.** Line 41 hero pitch used an "email editors of firstpagesage.com to get added to their AEO agency list — cited 2× by AI this run" example — which is literally the killed feature. Replaced with a live-feature example referencing the `05 Actions` mission stack instead.
 - **Listicle-pitch KPI honesty.** README §01 Overview previously described the listicle-pitch KPI as "surfaces the canonical sources that get cited 2×+ across engines (the pages your outreach budget should target)" — implying URLs the user can immediately pitch. Reality is a count + ratio. Rephrased to describe what 0.3.x ships (descriptive count) with explicit note that the actionable URL grid + `[Copy pitch]` + state tracking lands in 0.4.
-- **Security & Privacy box** added to `Key facts` — explicit one-liner on no telemetry, no traffic to webappski.com, API keys never written to disk, no SOC2 (single-developer tool — bus-factor honesty).
+- **Discoverability Score → AI-Bot Crawl Readiness rename.** The 0-100 composite over crawlability inputs (robots 30% · bots-not-blocked 25% · sitemap 25% · llms.txt 20%) was named «Discoverability Score» in 0.3.0 — implying it measured discoverability in answer engines. It only measures TECHNICAL access for AI crawlers (robots.txt allows / sitemap present / llms.txt present), not actual answer-pool inclusion (which is driven by off-page authority — Wikipedia / Reddit / review platforms). Renamed to «AI-Bot Crawl Readiness» across the HTML/markdown reports + README description, with explicit note disambiguating it from answer-pool inclusion.
+- **Security & Privacy box** added to README `Key facts` — explicit one-liner on no telemetry, no traffic to webappski.com, API keys never written to disk, no SOC2 (single-developer tool — bus-factor honesty).
 - **Known limitations in 0.3.x section** added below `Key facts` — surfaces both the outreach kill-switch and the listicle KPI gap before installation, not after.
 - **CHANGELOG narrative competitor list** aligned with README's 11 commercial vendors (Otterly / Profound / Peec / Bluefish / AthenaHQ / Goodie / HubSpot AEO Grader / Evertune / Ahrefs Brand Radar / Semrush AI Toolkit / Discovered Labs) — previous draft mentioned Wellows / OneGlanse / Brandlight / Knowatoa which weren't in README.
 - **CHANGELOG `[0.3.0]` heading date** corrected from `2026-05-09` (internal milestone) to `2026-05-13` (actual npm publish date).
+- **CODING_STANDARDS.md** — new «Template literals» section documenting the backtick-in-comment trap (a stray backtick inside `<!-- … -->` or `/* … */` inside a template-literal-returning function closes the template literal and produces a misleading SyntaxError far below).
 
-### Unchanged
+### Changed — bridge card redesign (HTML report promote-card)
 
-- Engine code, providers, pricing, model discovery, two-model extractor, sentiment classifier, crawlability audit, authority profile, all 0.3.0 features. CLI surface and `_summary.json` schema identical to 0.3.0.
+- DIY and Webappski end-nodes now have parallel geometry (256×88 each) — DIY was previously 168×48 and read as a "lesser option" visually, contradicting the open-source-first marketing.
+- Status pills inside each box: **FREE** top-left for DIY, **PRE-RELEASE** top-left for Webappski.
+- `?` chip top-right INSIDE each box — replaces the orphan «↓ details · hover» footnote text that was previously positioned BELOW the box. Tap and hover both supported via the existing `aria-haspopup="true"` `<button>` overlay.
+- Webappski meta-line «pre-release · $29 per plan · 30 missions» (285px wide) previously overflowed the 192px box and read as detached; now fits comfortably inside the 256px box, with `pre-release` lifted to the pill.
+- `priceLabel` default `'$29 once'` → `'$29 per plan'` (kills the «once» / «one-time» / «at-launch-time» semantic collision).
+- `priceMetaLine` default `'pre-release · $29 once'` → `'$29 per plan · 30 missions'`.
+- Footer line `'$29 once when it ships · demo + signup on the same page.'` → `'$29 per plan · one-time, no subscription · demo + signup on the linked page.'` (resolves «same page» antecedent ambiguity).
+
+### Changed — package.json
+
+- `version` bumped to `0.3.1`.
+- 7 new test scripts wired into the root `test` chain.
+- Description references «30-mission AEO plan (≈1–3 hours per mission, work at your pace)» instead of bare «30-day plan» (avoids the «30 days × 8 hours = 240 hours» misreading).
 
 ## [0.3.0] — 2026-05-13
 

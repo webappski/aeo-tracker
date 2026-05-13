@@ -6,6 +6,7 @@ import {
   buildOutreachPrompt,
   parseOutreachResponse,
   generateOutreachTemplates,
+  filterOwnDomainFromTopDomains,
 } from '../lib/report/outreach-templates.js';
 
 let passed = 0;
@@ -154,6 +155,94 @@ await test('happy path with stub provider', async () => {
   assert.equal(r.templates.length, 1);
   assert.equal(r.templates[0].host, 'g2.com');
   assert.ok(r.costInfo);
+});
+
+// ─── filterOwnDomainFromTopDomains (BUG 1 — own-domain self-pitch) ───
+
+console.log('\nfilterOwnDomainFromTopDomains (own-domain self-pitch guard)');
+
+await test('strips the user\'s own domain from topDomains', () => {
+  const out = filterOwnDomainFromTopDomains(
+    [
+      { host: 'typelessform.com', count: 19, share: 0.30 },
+      { host: 'g2.com',           count: 12, share: 0.19 },
+      { host: 'capterra.com',     count: 8,  share: 0.13 },
+    ],
+    'typelessform.com',
+  );
+  assert.deepEqual(out.map(d => d.host), ['g2.com', 'capterra.com']);
+});
+
+await test('strips subdomains of the user\'s own domain', () => {
+  const out = filterOwnDomainFromTopDomains(
+    [
+      { host: 'blog.typelessform.com', count: 5, share: 0.5 },
+      { host: 'g2.com',                count: 5, share: 0.5 },
+    ],
+    'typelessform.com',
+  );
+  assert.deepEqual(out.map(d => d.host), ['g2.com']);
+});
+
+await test('handles www-prefixed and protocol-prefixed config values', () => {
+  const out = filterOwnDomainFromTopDomains(
+    [{ host: 'typelessform.com', count: 1, share: 1 }, { host: 'g2.com', count: 1, share: 1 }],
+    'https://www.typelessform.com/',
+  );
+  assert.deepEqual(out.map(d => d.host), ['g2.com']);
+});
+
+await test('no own-domain config → identity passthrough', () => {
+  const input = [{ host: 'a.com', count: 1, share: 1 }];
+  assert.deepEqual(filterOwnDomainFromTopDomains(input, ''), input);
+});
+
+await test('generateOutreachTemplates: own-domain-only list returns empty without LLM call', async () => {
+  let called = false;
+  const r = await generateOutreachTemplates({
+    brand: 'Typeless Form',
+    domain: 'typelessform.com',
+    category: 'voice form filling',
+    topDomains: [{ host: 'typelessform.com', count: 19, share: 0.3 }],
+    providerName: 'stub',
+    providerCall: async () => { called = true; return { text: '{}', raw: {} }; },
+    apiKey: 'k', model: 'm',
+  });
+  assert.equal(r.templates.length, 0, 'no self-pitch emails generated');
+  assert.equal(called, false, 'LLM should not be invoked when all candidates are own-domain');
+});
+
+await test('generateOutreachTemplates: own-domain stripped, external domains still pitched', async () => {
+  let promptSent = '';
+  const r = await generateOutreachTemplates({
+    brand: 'Typeless Form',
+    domain: 'typelessform.com',
+    category: 'voice form filling',
+    topDomains: [
+      { host: 'typelessform.com', count: 19, share: 0.3 },
+      { host: 'g2.com',           count: 12, share: 0.19 },
+    ],
+    providerName: 'stub',
+    providerCall: async (prompt) => {
+      promptSent = prompt;
+      return {
+        text: JSON.stringify({ templates: [{ host: 'g2.com', subject: 'Hi', body: 'B', why: 'top' }] }),
+        raw: { usage: { prompt_tokens: 50, completion_tokens: 20 } },
+      };
+    },
+    apiKey: 'k', model: 'gpt-test',
+  });
+  // The user's own domain still appears in the «USER:» context block (the
+  // prompt tells the LLM whose brand we are pitching FOR), but it must NOT
+  // appear in the TOP-CITED PUBLISHERS list — that list drives outreach
+  // targets and is the surface the dogfood bug fired on.
+  const publishersBlock = promptSent.split('TOP-CITED PUBLISHERS')[1] || '';
+  assert.ok(!publishersBlock.includes('typelessform.com'),
+    'own domain must not appear in the TOP-CITED PUBLISHERS section of the prompt');
+  assert.ok(publishersBlock.includes('g2.com'),
+    'external domain must remain in the TOP-CITED PUBLISHERS section');
+  assert.equal(r.templates.length, 1);
+  assert.equal(r.templates[0].host, 'g2.com');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

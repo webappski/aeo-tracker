@@ -28,16 +28,6 @@ webappski.com · 2026-04-22 → 2026-05-13 (3 runs) · generated 2026-05-13
 
 _The UVI is a transparent composite — weights are defined in `lib/report/visibility-index.js`. Use the per-component scores to spot which dimension dragged the index down: low **Presence** → invest in citations, low **Sentiment** → PR work, low **Rank** → competitor displacement, low **Citation** → site-level discoverability._
 
-### How your score compares
-
-```
-Pre-revenue brand, Week 1–2:           0–15% ← you are here
-6-month-old brand with SEO investment: 20–45%
-Established category leader:            60–85%
-```
-
-_Rough baselines from Webappski's own weekly audits and client work. 0% at Week 1 is the norm for new brands — the tool is designed to track you from invisible to strong over months, not to grade you today._
-
 ## Visibility Trend — last 3 runs
 
 _2026-04-22 → 2026-05-13 · <span class="trend-delta" data-tone="flat">→ flat pts</span> overall. Each tick = one weekly run._
@@ -214,15 +204,17 @@ _<span class="file-check" data-tone="good">✅ robots.txt</span> <span class="fi
 
 _Source: `https://webappski.com/robots.txt` (HTTP 200). Re-audit on every `aeo-tracker report`._
 
-## Discoverability Score
+## AI-Bot Crawl Readiness
 
 <div class="score-block score-block-row">
 <div class="score-block-num" data-tone="good">100<span class="score-block-frac">/100</span></div>
 <div class="score-block-body">
-<div class="score-block-body-title">Site readiness for AI crawlers</div>
+<div class="score-block-body-title">Technical access for AI crawlers</div>
 <div class="score-block-body-note">Derived from robots.txt, AI bot access matrix, sitemap.xml, and /llms.txt presence — no extra HTTP requests beyond the crawlability audit.</div>
 </div>
 </div>
+
+_This measures TECHNICAL access for AI crawlers. Actual visibility in AI answers depends on off-page authority (Wikipedia / Reddit / review platforms) — see «Authority-Source Presence» below._
 
 | Signal | Score | Weight | Note |
 |---|---:|---:|---|

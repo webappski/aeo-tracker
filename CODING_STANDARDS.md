@@ -28,6 +28,24 @@ This project ships with `"dependencies": {}` empty. Do not add runtime `npm` pac
 | **Cyclomatic complexity** | ≤10 branches. If higher, extract sub-functions. |
 | **Params** | ≤4. If higher, switch to `options` object. |
 
+## Template literals
+
+Files that return template-literal strings (`lib/report/html.js::renderHtml`, `lib/report/mc-bridge.js::bridgeMarkup`/`bridgeJs`, anywhere a function returns a backtick-wrapped multi-line string) **must NOT contain backticks in their inner HTML / SVG / CSS / JS comments**. A stray backtick inside `<!-- … -->` or `/* … */` closes the surrounding template literal and produces a `SyntaxError: Unexpected token …` on an unrelated line far below the actual cause. Use straight `"…"` quotes in comments instead. Same rule applies to the `${…}` interpolation — never write a literal `${` inside a comment without escaping it, or it triggers an interpolation parse on garbage.
+
+```js
+// BAD — backtick in SVG comment closes the bridgeMarkup template literal
+return `
+  <!-- chip with "`?`" icon top-right -->
+  <g>...</g>
+`;
+
+// GOOD — straight quotes in the inner comment
+return `
+  <!-- chip with "?" icon top-right -->
+  <g>...</g>
+`;
+```
+
 ## Error handling
 
 ```js

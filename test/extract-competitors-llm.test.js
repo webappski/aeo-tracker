@@ -62,6 +62,25 @@ await test('prompt mentions platform/source exclusions (Reddit, G2, Trustpilot)'
   assert.ok(/Trustpilot/.test(p));
 });
 
+await test('BUG 2: prompt instructs category-grounded yes/no for Big Tech retailers, STT infra, unrelated industries', () => {
+  // Acceptance text from the May-2026 dogfood patch: explicit exclusion of
+  // (a) Big Tech / retailers used as examples or customers,
+  // (b) infrastructure providers one tier below the user's category,
+  // (c) name-dropped companies from unrelated industries.
+  const p = buildExtractorPrompt({
+    text: 't', brand: 'TypelessForm', domain: 'typelessform.com',
+    category: 'voice form filling solution for e-commerce checkout',
+  });
+  assert.ok(/VENDOR or PRODUCT in the same category/i.test(p),
+    'prompt must phrase the test as category-grounded yes/no');
+  assert.ok(/EXAMPLES, CUSTOMERS, or CASE STUDIES/i.test(p),
+    'prompt must call out the "Big Tech as customer" exclusion');
+  assert.ok(/Whisper|AssemblyAI|Deepgram/.test(p),
+    'prompt must name STT infrastructure as one-tier-below exclusion');
+  assert.ok(/Amazon, Walmart, and Starbucks/.test(p),
+    'prompt must include the retailer-as-customer example');
+});
+
 // ─── parseExtractorResponse ───
 
 console.log('\nparseExtractorResponse');
@@ -291,6 +310,81 @@ await test('self-brand filtered even if both models return it', async () => {
     secondary: { name: 'gemini', providerCall: mockProvider('{"brands":["Webappski","NoGood"]}'), apiKey: 'k', model: 'm' },
   });
   assert.deepEqual(result.verified, ['NoGood']);
+});
+
+// ─── BUG 2 fixture: real Gemini Q2 response excerpt, category = voice-form-filling ───
+//
+// The fixture mentions Amazon / Walmart / Starbucks (retailers as customers
+// of voice UX) and STT-infra (Whisper / AssemblyAI / Deepgram / Web Speech
+// API) — none of which are competitors to a voice-form-filling product. The
+// May-2026 dogfood run incorrectly classified them as competitors; the
+// category-grounded prompt + cross-check must now exclude them all.
+//
+// We assert two things:
+//   1. The category-grounded prompt embeds the source text and category.
+//   2. When both models correctly return brands: [] under the new prompt
+//      semantics, the merged extractor returns no competitors — the
+//      cross-check pipeline propagates the empty result instead of falling
+//      back to one model's output.
+
+console.log('\nBUG 2 — fixture: voice-form-filling Q2 with retailer/STT-infra distractors');
+
+const FIXTURE_PATH = new URL('./fixtures/gemini-q2-voice-checkout-excerpt.txt', import.meta.url);
+const { readFile } = await import('node:fs/promises');
+const fixtureText = await readFile(FIXTURE_PATH, 'utf-8');
+
+await test('fixture sanity: contains Amazon, Walmart, Starbucks, Whisper, AssemblyAI, vellis', () => {
+  for (const name of ['Amazon', 'Walmart', 'Starbucks', 'Whisper', 'AssemblyAI', 'vellis.financial']) {
+    assert.ok(fixtureText.includes(name), `fixture should contain "${name}"`);
+  }
+});
+
+await test('prompt for fixture includes category and source text', () => {
+  const p = buildExtractorPrompt({
+    text: fixtureText,
+    brand: 'TypelessForm',
+    domain: 'typelessform.com',
+    category: 'voice form filling solution for e-commerce checkout',
+  });
+  assert.ok(p.includes('voice form filling solution for e-commerce checkout'));
+  assert.ok(p.includes('Walmart'));
+  assert.ok(p.includes('vellis.financial'));
+});
+
+await test('both models correctly return [] under new prompt → no Amazon/Walmart/Starbucks/vellis as competitors', async () => {
+  // Simulates both models doing the right thing under the category-grounded prompt:
+  // retailers as customers + STT infra + unrelated fintech all excluded.
+  const result = await extractWithTwoModels({
+    text: fixtureText,
+    brand: 'TypelessForm', domain: 'typelessform.com',
+    category: 'voice form filling solution for e-commerce checkout',
+    primary:   { name: 'openai', providerCall: async () => ({ text: '{"brands":[]}', raw: {} }), apiKey: 'k', model: 'gpt-5.4-mini' },
+    secondary: { name: 'gemini', providerCall: async () => ({ text: '{"brands":[]}', raw: {} }), apiKey: 'k', model: 'gemini-2.5-flash' },
+  });
+  assert.deepEqual(result.verified, []);
+  assert.deepEqual(result.unverified, []);
+  for (const name of ['Amazon', 'Walmart', 'Starbucks', 'vellis.financial', 'Whisper', 'AssemblyAI']) {
+    assert.ok(!result.verified.includes(name),
+      `${name} must NOT be a verified competitor`);
+    assert.ok(!result.unverified.includes(name),
+      `${name} must NOT be an unverified competitor`);
+  }
+});
+
+await test('one model regresses (still lists retailers) → they land only in unverified, not verified', async () => {
+  // Cross-check resilience: if ONE model still returns Amazon/Walmart/Starbucks
+  // under the new prompt, the merge tier puts them in `unverified` only. The
+  // «verified» (rendered prominently) tier must stay clean.
+  const result = await extractWithTwoModels({
+    text: fixtureText,
+    brand: 'TypelessForm', domain: 'typelessform.com',
+    category: 'voice form filling solution for e-commerce checkout',
+    primary:   { name: 'openai', providerCall: async () => ({ text: '{"brands":["Amazon","Walmart","Starbucks"]}', raw: {} }), apiKey: 'k', model: 'm' },
+    secondary: { name: 'gemini', providerCall: async () => ({ text: '{"brands":[]}', raw: {} }), apiKey: 'k', model: 'm' },
+  });
+  assert.deepEqual(result.verified, [], 'cross-check disagreement → verified tier must be empty');
+  // They appear in unverified (the dashed-badge tier), but never as «verified competitors».
+  assert.ok(['Amazon', 'Walmart', 'Starbucks'].every(n => result.unverified.includes(n)));
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

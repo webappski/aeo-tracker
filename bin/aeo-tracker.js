@@ -32,6 +32,7 @@ import { detectAdsInResponse, summariseAdsAcrossResults } from '../lib/report/ad
 import { normalizeQueries } from '../lib/config/queries-normalize.js';
 import { parseGeoFlag, wrapQueryForRegion, listRegionCodes } from '../lib/report/geo-context.js';
 import { computeTopDomains } from '../lib/report/top-domains.js';
+import { isOwnDomain } from '../lib/report/own-domain.js';
 // `report`-only and `export`-only modules are dynamically imported inside their
 // command handlers to keep cold-start fast for `--help`, `--version`, `init`
 // and `run` paths (saved ~9 eager imports / ~250–300 ms on a cold disk).
@@ -133,7 +134,19 @@ async function deriveActionsWithLLM(latest, prev, category, { providerName, prov
   const compLines = (latest.topCompetitors || []).slice(0, 8)
     .map(c => `  - ${c.name} (${c.count} checks)`).join('\n') || '  (none detected)';
 
-  const srcLines = (latest.topCanonicalSources || []).slice(0, 8)
+  // Strip the user's own domain (and subdomains) BEFORE the prompt is built —
+  // without this filter, deriveActionsWithLLM's «recommend pitching this source
+  // specifically» rule produces self-pitch actions when the brand's own pages
+  // are its most-cited sources (May-2026 typelessform.com dogfood run).
+  const ownDom = latest.domain || '';
+  const externalSources = (latest.topCanonicalSources || []).filter(s => {
+    if (!s || typeof s.url !== 'string') return false;
+    let host;
+    try { host = new URL(s.url).hostname; }
+    catch { return true; } // keep malformed entries; downstream guards handle them
+    return !isOwnDomain(host, ownDom);
+  });
+  const srcLines = externalSources.slice(0, 8)
     .map(s => `  ${s.count}× ${s.url}`).join('\n') || '  (none)';
 
   const prevNote = prev

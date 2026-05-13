@@ -24,7 +24,7 @@ test('all-mentions-positive perfect run', () => {
   assert.equal(c.citation, 100);
 });
 
-test('zero mentions yields all zeros (no signal, not phantom-neutral)', () => {
+test('zero mentions yields no-signal: presence/citation 0, sentiment/rank null', () => {
   const c = computeComponents({
     domain: 'acme.com',
     results: [
@@ -33,8 +33,11 @@ test('zero mentions yields all zeros (no signal, not phantom-neutral)', () => {
     ],
   });
   assert.equal(c.presence, 0);
-  assert.equal(c.sentiment, 0); // was 50; phantom-neutral inflated UVI to 13/100 for 0/0/0 runs
-  assert.equal(c.rank, 0);
+  // sentiment/rank are null (signal absent) — not 50, not 0. A 0 reading
+  // would let them be averaged into the UVI weighted sum at full weight,
+  // which is what produced phantom-neutral inflation in earlier versions.
+  assert.equal(c.sentiment, null);
+  assert.equal(c.rank, null);
   assert.equal(c.citation, 0);
 });
 
@@ -59,10 +62,104 @@ test('rank degrades with position', () => {
   assert.equal(c.rank, 40);
 });
 
-test('empty results → all zeros (no signal)', () => {
+test('empty results → presence 0, sentiment/rank null (no signal)', () => {
   const c = computeComponents({ results: [] });
   assert.equal(c.presence, 0);
-  assert.equal(c.sentiment, 0); // was 50; corrected so empty runs read 0/100 not 13/100
+  assert.equal(c.sentiment, null); // null = absent signal; not 0, not phantom-neutral 50
+  assert.equal(c.rank, null);
+  assert.equal(computeUVI(c), 0); // weightSum collapses to 0 when all components null/0
+});
+
+// ─── BUG 2 — rank null when never measured ───
+
+test('rank: all-null position cells → rank null (excluded from UVI)', () => {
+  const c = computeComponents({
+    domain: 'acme.com',
+    results: [
+      { mention: 'yes', position: null, sentiment: { label: 'positive', confidence: 'high' }, canonicalCitations: ['https://acme.com/x'] },
+      { mention: 'yes', position: null, sentiment: { label: 'positive', confidence: 'high' }, canonicalCitations: ['https://acme.com/y'] },
+    ],
+  });
+  // No cell has a numeric position → rank null, NOT a 50 fallback.
+  assert.equal(c.rank, null);
+  assert.equal(c.rankSample, 0);
+  // UVI re-normalises remaining weights. presence + sentiment + citation
+  // (0.35 + 0.25 + 0.20 = 0.80) → re-weighted to 1.0 →
+  // (100*0.35 + 100*0.25 + 100*0.20) / 0.80 = 100.
+  assert.equal(computeUVI(c), 100);
+});
+
+test('rank: mixed null/numeric positions use only numeric cells', () => {
+  const c = computeComponents({
+    domain: 'a.com',
+    results: [
+      { mention: 'yes', position: 1,    canonicalCitations: [] },
+      { mention: 'yes', position: null, canonicalCitations: [] },
+      { mention: 'yes', position: 3,    canonicalCitations: [] },
+    ],
+  });
+  // (100 + 70) / 2 = 85
+  assert.equal(c.rank, 85);
+  assert.equal(c.rankSample, 2);
+});
+
+// ─── BUG 3 — sentiment: low-confidence neutrals excluded ───
+
+test('sentiment: low-confidence neutral tie-breaks excluded from composite', () => {
+  const c = computeComponents({
+    domain: 'a.com',
+    results: [
+      { mention: 'yes', position: 1, sentiment: { label: 'positive', confidence: 'high' }, canonicalCitations: [] },
+      { mention: 'yes', position: 1, sentiment: { label: 'positive', confidence: 'high' }, canonicalCitations: [] },
+      { mention: 'yes', position: 2, sentiment: { label: 'neutral',  confidence: 'low'  }, canonicalCitations: [] },
+      { mention: 'yes', position: 2, sentiment: { label: 'neutral',  confidence: 'low'  }, canonicalCitations: [] },
+      { mention: 'yes', position: 2, sentiment: { label: 'neutral',  confidence: 'low'  }, canonicalCitations: [] },
+    ],
+  });
+  // Only the 2 high-confidence positives count → 100/100, n=2. Without the
+  // exclusion the 3 fake neutrals would drag this to (200+150)/5 = 70.
+  assert.equal(c.sentiment, 100);
+  assert.equal(c.sentimentSample, 2);
+});
+
+test('sentiment: all low-conf-neutral → sentiment null, UVI re-weights', () => {
+  const c = computeComponents({
+    domain: 'a.com',
+    results: [
+      { mention: 'yes', position: 1, sentiment: { label: 'neutral', confidence: 'low' }, canonicalCitations: [] },
+      { mention: 'yes', position: 1, sentiment: { label: 'neutral', confidence: 'low' }, canonicalCitations: [] },
+    ],
+  });
+  assert.equal(c.sentiment, null);
+  assert.equal(c.sentimentSample, 0);
+  // presence=100, rank=100, citation=0 — sentiment excluded.
+  // (100*0.35 + 100*0.20 + 0*0.20) / 0.75 = 73.33 → 73.
+  assert.equal(computeUVI(c), 73);
+});
+
+test('sentiment: failed/empty confidence treated as no-signal', () => {
+  const c = computeComponents({
+    domain: 'a.com',
+    results: [
+      { mention: 'yes', position: 1, sentiment: { label: 'neutral',  confidence: 'failed' }, canonicalCitations: [] },
+      { mention: 'yes', position: 1, sentiment: { label: 'positive', confidence: 'high'   }, canonicalCitations: [] },
+    ],
+  });
+  assert.equal(c.sentiment, 100);
+  assert.equal(c.sentimentSample, 1);
+});
+
+test('sentiment: low-confidence positive (not neutral) kept as signal', () => {
+  // Low-confidence + non-neutral label means one model said positive and the
+  // other failed — single-model fallback, NOT a tie-break. Still real signal.
+  const c = computeComponents({
+    domain: 'a.com',
+    results: [
+      { mention: 'yes', position: 1, sentiment: { label: 'positive', confidence: 'single-model' }, canonicalCitations: [] },
+    ],
+  });
+  assert.equal(c.sentiment, 100);
+  assert.equal(c.sentimentSample, 1);
 });
 
 console.log('\ncomputeUVI');

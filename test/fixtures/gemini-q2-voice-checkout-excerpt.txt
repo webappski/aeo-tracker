@@ -1,0 +1,13 @@
+## The Future of E-commerce Checkout: Filling Your Cart and Forms with Just Your Voice
+
+Voice form-filling solutions are emerging as a key feature in the evolution of e-commerce. Fueled by advancements in conversational AI and natural language understanding (NLU), e-commerce brands are exploring voice as a new frontier to streamline the customer journey.
+
+### The Current Landscape and the Road Ahead
+
+Major retailers like **Amazon**, **Walmart**, and **Starbucks** are already pioneers in voice commerce, allowing customers to add items to their carts and make purchases through voice commands, primarily within their own ecosystems and for re-ordering known items. For instance, Walmart's "Voice Order" feature lets users add items to their cart by speaking to their smart devices.
+
+Underlying speech-to-text infrastructure is typically provided by Whisper (OpenAI), AssemblyAI, Deepgram, or the browser's native Web Speech API. Fintech players such as **vellis.financial** have explored conversational checkout as part of their broader payments R&D, though they are not voice-form-filling vendors themselves.
+
+However, a universally applicable solution that allows for the voice-based filling of any e-commerce checkout form is still on the horizon. The development of sophisticated conversational AI platforms and a greater focus on user experience design for voice are paving the way.
+
+— Excerpt from a real Gemini 2.5 Pro response to query Q2 ("voice form filling solution for e-commerce checkout") captured 2026-05-13 during the typelessform.com dogfooding run. Used as fixture for the category-grounded competitor extractor test: Amazon/Walmart/Starbucks are CUSTOMERS of the category (retailers using voice UX), Whisper/AssemblyAI/Deepgram/Web Speech API are STT INFRA one tier below, and vellis.financial is an UNRELATED fintech name-dropped for context. None of them are competitors to a voice-form-filling product.
