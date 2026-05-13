@@ -2,6 +2,23 @@
 
 All notable changes to `@webappski/aeo-tracker`.
 
+## [0.3.2] — 2026-05-13
+
+**Re-publish of 0.3.1 with the full intended file set.** The original `npm publish` for `[0.3.1]` packed the working tree before the complete staging was finalised — the tarball missed `lib/report/own-domain.js` (new module) and likely additional parallel-diff fixes that depend on it (`outreach-templates.js::filterOwnDomainFromTopDomains`, `sections.js::topCitedHostsForProvider`/`isDenyListedOutreachHost`, the additive `_summary.json::scores` sub-component fields).
+
+`[0.3.1]` is published on npm but technically broken: `test/own-domain.test.js` references `lib/report/own-domain.js` which is not in the tarball, and the four downstream call-sites that should filter own-domain from outreach surfaces silently fall back to the pre-fix behavior. 0.3.2 is a same-day patch shipping the complete intended `[0.3.1]` scope.
+
+### Fixed (vs published 0.3.1 tarball)
+
+- Ships `lib/report/own-domain.js` (the dependency missing from 0.3.1).
+- Ships the full sections.js refactor (own-domain filtering in 4 surfaces, AI-Bot Crawl Readiness rename, sectionBaseline placeholder, UTM by-origin split).
+- Ships the mc-metadata.js additive schema expansion (`scores.{presence,sentiment,rank,citation,sample,sentimentSample,rankSample}` + per-engine breakdown).
+- Ships the 7 new test files referenced by the [0.3.1] CHANGELOG entry.
+
+### Unchanged
+
+- `[0.3.1]` CHANGELOG entry below describes the intended scope of both releases. No new features in 0.3.2 vs the documented 0.3.1 scope — this is strictly a re-publish to fix the incomplete tarball.
+
 ## [0.3.1] — 2026-05-13
 
 Patch release on top of v0.3.0. Two themes: (a) closing the docs-vs-reality drift flagged by an independent persona review (solo founder / agency operator / B2B SaaS lead) — outreach kill-switch was documented as a working feature in 5+ places; (b) fixing a real dogfooding bug where AI suggested the user pitch their own brand, plus surfacing the UVI sub-components for clients consuming `_summary.json` directly. **No breaking changes** — CLI surface unchanged, config schema unchanged, `_summary.json` schema additively extended (consumers reading 0.3.0 fields still work).
