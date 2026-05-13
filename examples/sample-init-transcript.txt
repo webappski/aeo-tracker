@@ -15,27 +15,50 @@ Configured providers: OpenAI (ChatGPT), Google (Gemini), Anthropic (Claude)
 Auto-suggest will:
   1. Fetch https://webappski.com from your machine
   2. Extract title, meta, headings, first 2KB of body text
-  3. Send that excerpt to Anthropic (Claude) (claude-sonnet-4-6) via YOUR API key
-  4. Show you the suggested queries + competitors before saving
-  Your API key never leaves this machine. No telemetry. No analytics. No traffic to webappski.com.
+  3. Run the research pipeline (brainstorm → filter → score → validate → simulate)
+     via YOUR API keys (priority: OpenAI → Gemini → Anthropic)
+  4. Show you the suggested queries before saving
+  Your API keys never leave this machine. No telemetry. No analytics.
+
   Fetching https://webappski.com... (164,613 bytes, via https://webappski.com/en)
-  Estimated: ~785 input tokens (~$0.0024)
-  Asking Anthropic (Claude)... (attempt 1/2)
+  [brainstorm → filter → score → validate]
 
-Suggested queries (language: en)
-  Q1: best AEO services 2026
-  Q2: how to get your product visible in ChatGPT and Perplexity
-  Q3: answer engine optimization for SaaS startups
+  [brainstorm] started
+  [brainstorm] attempt
+  [brainstorm] done (20)
+  [filter] started
+  [filter] done kept=20 rejected=0
+  [score] started
+  [score] done topScore=95
+  [validate] started via Google (Gemini)
+  [validate] done
+  [simulate] started
+  [simulate] done passed=14 rejected=1
 
-Suggested competitors
-  - Profound
-  - Goodie
-  - Daydream
-  - AI Search Grader
-  - Peec AI
+  pipeline cost ~$0.0057
+
+Selected queries (1 per intent bucket):
+  commercial     score=95 high
+    → best Answer Engine Optimization agencies 2026
+  vertical       score=90 high
+    → Answer Engine Optimization agency for B2B software
+  problem        score=90 high [fallback from commercial]
+    → enterprise Answer Engine Optimization service providers
+
+Alternatives (for swap):
+  [90] commercial     (validated) best Answer Engine Optimization consultants for startups
+  [90] vertical       (validated) Answer Engine Optimization for healthcare companies
+  [90] vertical       (validated) Answer Engine Optimization for financial technology startups
+  [90] vertical       (validated) Answer Engine Optimization for ecommerce brands
+  [90] vertical       (validated) Answer Engine Optimization for legal software firms
+
+Warnings:
+  ⚠ problem: no candidate in primary bucket, used fallback from "commercial"
+  Validating queries via OpenAI (ChatGPT)... ($0.0019)
+  ✓ All queries pass validation
 
 ✓ Created .aeo-tracker.json
   Brand: Webappski | Domain: webappski.com
-  Queries: 3, Competitors: 5, Providers: 3
+  Queries: 3, Providers: 3
 
 Next: aeo-tracker run

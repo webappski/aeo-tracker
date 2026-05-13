@@ -1,7 +1,7 @@
 {
   "name": "@webappski/aeo-tracker",
   "version": "0.3.0",
-  "description": "Open-source CLI for tracking brand visibility across AI answer engines (ChatGPT, Gemini, Claude, Perplexity). Smart init auto-suggests queries from your site, retries across providers on billing/auth/rate-limit errors, auto-recovers from validator blocks by swapping in validated alternatives (intent-diversity ranking), and shows a live TTY spinner during long pipeline phases. Actionable error panels on every failure path — top-up links, regenerate-key hints, --keywords escape hatch — instead of raw Node stack traces. Includes diff reports, manual paste mode for browser-only engines, competitor tracking, canonical source extraction, and markdown reports with inline SVG charts. Direct API calls — no third-party dashboards, no inflated scores. Zero runtime dependencies.",
+  "description": "Open-source AEO tracker for ChatGPT, Claude, Gemini, Perplexity. Free alternative to Otterly, Profound, Peec. Exports a JSON prompt — paste into any AI for a personalized 30-mission AEO plan (≈1–3 hours per mission, work at your pace). Zero dependencies, MIT, local-first.",
   "type": "module",
   "bin": {
     "aeo-tracker": "./bin/aeo-tracker.js"
@@ -36,7 +36,11 @@
     "test:recovery": "node test/validator-recovery.test.js",
     "test:spinner": "node test/spinner.test.js",
     "test:position": "node test/find-position.test.js",
-    "test": "npm run test:syntax && npm run test:imports && npm run test:cli && npm run test:validator && npm run test:extract && npm run test:sentiment && npm run test:outreach && npm run test:crawlability && npm run test:category && npm run test:queries && npm run test:geo && npm run test:mdhtml && npm run test:htmlrender && npm run test:uvi && npm run test:topics && npm run test:csv && npm run test:logs && npm run test:ads && npm run test:utm && npm run test:authority && npm run test:topdomains && npm run test:depth && npm run test:quality && npm run test:pipeline && npm run test:position && npm run test:keys && npm run test:resilience && npm run test:recovery && npm run test:spinner",
+    "test:design-lint": "node test/design-lint.test.js",
+    "test:authority-profiles": "node test/authority-profiles.test.js",
+    "test:authority-github": "node test/authority-github.test.js",
+    "test:authority-legacy": "node test/authority-legacy-shape.test.js",
+    "test": "npm run test:syntax && npm run test:imports && npm run test:cli && npm run test:validator && npm run test:extract && npm run test:sentiment && npm run test:outreach && npm run test:crawlability && npm run test:category && npm run test:queries && npm run test:geo && npm run test:mdhtml && npm run test:htmlrender && npm run test:uvi && npm run test:topics && npm run test:csv && npm run test:logs && npm run test:ads && npm run test:utm && npm run test:authority && npm run test:authority-profiles && npm run test:authority-github && npm run test:authority-legacy && npm run test:topdomains && npm run test:depth && npm run test:quality && npm run test:pipeline && npm run test:position && npm run test:keys && npm run test:resilience && npm run test:recovery && npm run test:spinner && npm run test:design-lint",
     "prepublishOnly": "npm test"
   },
   "files": [
@@ -62,7 +66,17 @@
     "generative-engine-optimization",
     "llm",
     "ai-mentions",
-    "visibility-tracker"
+    "visibility-tracker",
+    "otterly-alternative",
+    "profound-alternative",
+    "peec-alternative",
+    "aeo-plan",
+    "30-mission-aeo-plan",
+    "ai-citation-tracker",
+    "prompt-generator",
+    "chatgpt-monitoring",
+    "claude-monitoring",
+    "perplexity-monitoring"
   ],
   "author": "Webappski <info@webappski.com> (https://webappski.com)",
   "license": "MIT",

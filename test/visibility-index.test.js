@@ -24,7 +24,7 @@ test('all-mentions-positive perfect run', () => {
   assert.equal(c.citation, 100);
 });
 
-test('zero mentions yields zeros and neutral sentiment', () => {
+test('zero mentions yields all zeros (no signal, not phantom-neutral)', () => {
   const c = computeComponents({
     domain: 'acme.com',
     results: [
@@ -33,7 +33,7 @@ test('zero mentions yields zeros and neutral sentiment', () => {
     ],
   });
   assert.equal(c.presence, 0);
-  assert.equal(c.sentiment, 50);
+  assert.equal(c.sentiment, 0); // was 50; phantom-neutral inflated UVI to 13/100 for 0/0/0 runs
   assert.equal(c.rank, 0);
   assert.equal(c.citation, 0);
 });
@@ -59,10 +59,10 @@ test('rank degrades with position', () => {
   assert.equal(c.rank, 40);
 });
 
-test('empty results → all zeros + neutral 50', () => {
+test('empty results → all zeros (no signal)', () => {
   const c = computeComponents({ results: [] });
   assert.equal(c.presence, 0);
-  assert.equal(c.sentiment, 50);
+  assert.equal(c.sentiment, 0); // was 50; corrected so empty runs read 0/100 not 13/100
 });
 
 console.log('\ncomputeUVI');

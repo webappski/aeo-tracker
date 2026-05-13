@@ -1,45 +1,82 @@
 $ aeo-tracker run
 
+Discovering current models…
+  ✓ openai: gpt-5-search-api
+  ✓ gemini: gemini-2.5-pro
+  ✓ anthropic: claude-sonnet-4-6
+  skip perplexity — no PERPLEXITY_API_KEY
+
 @webappski/aeo-tracker — run
-Brand: Webappski | Domain: webappski.com | Date: 2026-04-19
-Providers: ChatGPT (OpenAI), Gemini (Google), Claude (Anthropic)
+Brand: Webappski | Domain: webappski.com | Date: 2026-05-13
+Models: gpt/5-search, gemini/2.5-pro, claude/sonnet-4-6
 Queries: 3
 
-  NO   Q1/openai (3 citations, 8673ms)
-  NO   Q1/gemini (5 citations, 5234ms)
-  NO   Q1/anthropic (2 citations, 47536ms)
-  NO   Q2/openai (4 citations, 12267ms)
-  NO   Q2/gemini (6 citations, 91654ms)
-  NO   Q2/anthropic (3 citations, 44547ms)
-  NO   Q3/openai (3 citations, 7741ms)
-  NO   Q3/gemini (4 citations, 4745ms)
-  NO   Q3/anthropic (2 citations, 34886ms)
+  ✓ validation cache hit for all 3 queries (no LLM cost)
+  ✓ All queries pass validation
+  Extractor: gpt-5.4-mini + gemini-2.5-flash (parallel cross-check)
+
+  NO   Q1/openai     (12 citations, 11243ms)
+  NO   Q1/gemini     (8 citations, 6512ms)
+  NO   Q1/anthropic  (6 citations, 42301ms)
+  NO   Q2/openai     (15 citations, 9876ms)
+  NO   Q2/gemini     (9 citations, 7104ms)
+  NO   Q2/anthropic  (5 citations, 38215ms)
+  NO   Q3/openai     (10 citations, 8432ms)
+  NO   Q3/gemini     (7 citations, 5921ms)
+  NO   Q3/anthropic  (4 citations, 31867ms)
 
 ════════════════════════════════════════════════════════════
   AEO VISIBILITY REPORT — Webappski
 ════════════════════════════════════════════════════════════
 
-  Query                                      openai      gemini      anthropic
-  ────────────────────────────────────────────────────────────────────────────
-  Q1: best AEO services 2026                  no          no          no
-  Q2: how to get your product visible in Ch   no          no          no
-  Q3: answer engine optimization for SaaS s   no          no          no
+  Query                                                gpt/5-search    gemini/2.5-pro  claude/sonnet-4
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Q1: best Answer Engine Optimization agencies 2026    no              no              no
+  Q2: top Answer Engine Optimization monitoring tools  no              no              no
+  Q3: Answer Engine Optimization consultants for B2B   no              no              no
 
   Score: 0% (0/9 checks returned a mention)
+  Extraction: 49 brands verified (both models), 22 unverified (one model only) — $0.0216
 
-  Tracked competitors (from config):
-    Otterly (3/9 = 33%)
-    HubSpot (1/9 = 11%)
-    Profound (1/9 = 11%)
+  Top competitors mentioned instead:
+    NoGood (4 checks)
+    Omniscient Digital (4 checks)
+    Minuttia (3 checks)
+    First Page Sage (3 checks)
+    iPullRank (3 checks)
+    Siege Media (2 checks)
+    Avenue Z (2 checks)
+    Conductor (2 checks)
+
+  Unverified (only one of two models found):
+    - Ahrefs  (1 cell)
+    - SE Ranking  (1 cell)
+    - Screaming Frog SEO Spider  (1 cell)
+    - STAT  (1 cell)
+    - AccuRanker  (1 cell)
+    - Keyword.com  (1 cell)
+    - Morningscore  (1 cell)
+    - seoMonitor  (1 cell)
+    - Google Search Console  (1 cell)
+    - Bing Webmaster Tools  (1 cell)
+    (+ 12 more — see _summary.json)
 
   Top canonical sources (pages AI cites for your vertical):
-    1× https://minuttia.com
-    1× https://respona.com
-    1× https://moosend.com
-    1× https://firstpagesage.com
-    1× https://higoodie.com
+    2× https://minuttia.com/best-aeo-agencies/
+    2× https://firstpagesage.com/seo-blog/the-top-answer-engine-optimization-aeo-com...
+    2× https://www.indiehackers.com/post/best-15-aeo-tools-in-2026-tested-ranked-6c6...
+    2× https://contently.com/2026/04/29/top-10-tools-answer-engine-optimization-aeo-...
+    2× https://scrunch.com/blog/best-answer-engine-optimization-aeo-generative-engin...
     (15 more in _summary.json)
 
-  Raw responses saved to: aeo-responses/2026-04-19/
+  Raw responses saved to: aeo-responses/2026-05-13/
+  Run weekly for trends. Full methodology: webappski.com/blog/aeo-visibility-challenge-week-1
+
+
+  Session cost: $0.3244
+    claude-sonnet-4-6              75426 tok  $0.3028
+    gpt-5.4-mini+gemini-2.5-flash  35360 tok  $0.0216
+
+Next: aeo-tracker report --html  (or 'aeo-tracker report' for markdown-only)
 
 # exit code: 2 (zero mentions across all engines — expected for a pre-visibility brand)

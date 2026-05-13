@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * @webappski/aeo-tracker v0.5.0
+ * @webappski/aeo-tracker v0.3.0
  * Open-source CLI for tracking brand visibility across AI answer engines.
  * https://webappski.com | MIT License
  */
@@ -2012,14 +2012,24 @@ function buildHtmlSummary(snapshots, rawResponses) {
     }
   }
 
+  // Bare host form for matching citation URLs against the brand's own domain.
+  // Strip protocol / www. / trailing slash so "https://www.foo.com/" and
+  // "foo.com" both match a citation URL containing "foo.com".
+  const ownDomainBare = (domain || '').toLowerCase()
+    .replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
+  const isOwnDomainCite = (u) =>
+    typeof u === 'string' && ownDomainBare && u.toLowerCase().includes(ownDomainBare);
+
   // Per-engine visibility + delta + tiny trend series (per provider+model)
   const engines = engineList.map(en => {
     const rows = latest.results.filter(r => r.provider === en.provider && r.model === en.model);
     const hits = rows.filter(r => r.mention === 'yes' || r.mention === 'src').length;
     const total = rows.length;
     const pct = total ? Math.round((hits / total) * 100) : 0;
-    // v0.5 — total citation count per engine, used by hero KPI and engine cards
-    const citations = rows.reduce((s, r) => s + (r.citationCount || 0), 0);
+    // v0.5 — citations to OWN domain only (used by hero copy + engine cards
+    // that say "cited YOU N times"). r.citationCount is total-cited-anywhere
+    // and would lie when AI cited only competitor pages.
+    const citations = rows.reduce((s, r) => s + (r.citations || []).filter(isOwnDomainCite).length, 0);
     const cells = queryOrder.map(q => {
       const c = rows.find(r => r.query === q.id);
       if (!c) return 'missing';
@@ -2087,6 +2097,10 @@ function buildHtmlSummary(snapshots, rawResponses) {
         position: r?.position ?? null,
         sentiment: r?.sentiment ?? null,
         competitors: [...verifiedCells, ...unverifiedCells].slice(0, 4),
+        // Total citations the engine returned for this cell — useful in
+        // mention='no' cells to communicate "engine answered with N sources,
+        // none of which named you" instead of a bare dash.
+        citationCount: r?.citationCount ?? 0,
         responseExcerpt: r?.responseExcerpt ?? null,
         responseQuality: r?.responseQuality ?? null,
         // Surface the underlying provider error message for cells that errored.
@@ -2104,9 +2118,18 @@ function buildHtmlSummary(snapshots, rawResponses) {
   const costTrend = snapshots.map(s => Math.round((s.sessionCostUsd || 0) * 10000) / 10000);
   const totalCostUsd = Math.round(costTrend.reduce((s, v) => s + v, 0) * 1_000_000) / 1_000_000;
 
-  // v0.5 — total citation count this run + delta vs prev run (used by hero KPI)
-  const totalCitations = latest.results.reduce((s, r) => s + (r.citationCount || 0), 0);
-  const totalCitationsPrev = prev ? prev.results.reduce((s, r) => s + (r.citationCount || 0), 0) : null;
+  // v0.5 — citation count to OWN domain this run + delta vs prev run.
+  // Hero KPI ("cited you N times") needs own-domain only; the raw r.citationCount
+  // counts citations to any URL (competitors, sources) and would inflate the
+  // headline by mixing "they cited goforgeai.com" into "they cited you".
+  const totalCitations = latest.results.reduce((s, r) => s + (r.citations || []).filter(isOwnDomainCite).length, 0);
+  const totalCitationsPrev = prev ? (function () {
+    const prevDomainBare = (prev.domain || domain || '').toLowerCase()
+      .replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
+    return prev.results.reduce((s, r) => s + (r.citations || []).filter(u =>
+      typeof u === 'string' && prevDomainBare && u.toLowerCase().includes(prevDomainBare)
+    ).length, 0);
+  })() : null;
 
   // v0.5 — region count for the diagnostics tile.
   // Multi-region runs (--geo) tag each result with `region`; single-region default → 1.
@@ -2221,6 +2244,53 @@ async function cmdReport(args = {}) {
   }
 
   const latest = snapshots[snapshots.length - 1];
+
+  // ─── Refresh-cache (--refresh-cache <csv|all>) ───
+  // Invalidate cached fields BEFORE the cache-or-fetch blocks below so
+  // they refetch fresh data instead of reading stale data from
+  // _summary.json. Without this flag, fields like pageSignals /
+  // authorityPresence persist across report runs — efficient for
+  // iteration but stale when the client's site changes.
+  //
+  // Usage: aeo-tracker report --refresh-cache=pageSignals,authorityPresence
+  //        aeo-tracker report --refresh-cache=all
+  const REFRESHABLE_FIELDS = [
+    'pageSignals',          // own-domain H1/H2/schema-org crawl
+    'authorityPresence',    // wikipedia/reddit/github
+    'crawlability',         // robots.txt/llms.txt/sitemap audit
+    'citationClassification', // LLM-classified citation domains
+    'outreachTemplates',    // LLM-generated pitch templates
+    'entityGraph',          // sameAs reciprocity check
+    'competitorPricing',    // LLM-classified competitor pricing tiers
+    'llmActions',           // LLM-generated recommended actions
+    'adsDetected',          // sponsored-content scan
+  ];
+  if (args.refreshCache) {
+    const requested = String(args.refreshCache)
+      .split(',').map(s => s.trim()).filter(Boolean);
+    const expand = (f) => f === 'all' ? REFRESHABLE_FIELDS.slice() : [f];
+    const expanded = requested.flatMap(expand);
+    const unknown = expanded.filter(f => !REFRESHABLE_FIELDS.includes(f));
+    if (unknown.length > 0) {
+      console.error(`${c.red}Unknown --refresh-cache fields: ${unknown.join(', ')}${c.reset}`);
+      console.error(`Valid fields: ${REFRESHABLE_FIELDS.join(', ')}, or "all"`);
+      process.exit(1);
+    }
+    const cleared = [];
+    for (const f of expanded) {
+      if (latest[f] !== undefined) {
+        delete latest[f];
+        cleared.push(f);
+      }
+    }
+    if (cleared.length > 0) {
+      await persistSnapshot(latest);
+      console.log(`  ${c.dim}Cache invalidated: ${cleared.join(', ')}${c.reset}`);
+    } else {
+      console.log(`  ${c.dim}--refresh-cache: nothing to clear (none of the requested fields was cached)${c.reset}`);
+    }
+  }
+
   const rawResponses = {};
   for (const r of latest.results) {
     const qi = String(r.query).replace(/^Q/, '');
@@ -2336,18 +2406,59 @@ async function cmdReport(args = {}) {
     console.log(`  ${c.dim}Recommendations loaded from cache${c.reset}`);
   }
 
-  // ─── Authority presence (Wikipedia + Reddit, cached) ───
-  // Off-page signals AI engines weight heavily. Both APIs are free public
+  // ─── v1.1: Page signals (own-domain HTML crawl, cached) ───
+  // Surfaces H1/H2 patterns, answer-capsule coverage, Schema.org block
+  // count + types, FAQ count. Pure HTTP fetch, no LLM cost.
+  //
+  // Runs BEFORE the authority block — authority profile detection reads
+  // pageSignals.homepage.headings as a category fallback when init didn't
+  // fill category. Order matters: without fresh pageSignals here, authority
+  // sees `latest.pageSignals === undefined` and falls back to default
+  // profile, missing the dev-tool / AEO-studio signal.
+  if (!latest.pageSignals && latest.domain && !args.noPageSignals) {
+    console.log(`  ${c.dim}Crawling own-domain page signals (${latest.domain})...${c.reset}`);
+    try {
+      latest.pageSignals = await checkPageSignals(latest.domain);
+      await persistSnapshot(latest);
+      const ps = latest.pageSignals.homepage;
+      if (ps?.ok) {
+        console.log(`  ${c.green}✓${c.reset} h1:${ps.headings.h1.count} h2:${ps.headings.h2.count} capsules:${ps.answerCapsules.coverage}% schemas:${ps.schemaOrg.blockCount}`);
+      } else {
+        console.log(`  ${c.yellow}⚠ Page signals: ${ps?.error || 'unavailable'}${c.reset}`);
+      }
+    } catch (err) {
+      console.log(`  ${c.yellow}⚠ Page signals skipped: ${errMsg(err)}${c.reset}`);
+    }
+  } else if (latest.pageSignals) {
+    console.log(`  ${c.dim}Page signals loaded from cache${c.reset}`);
+  } else if (args.noPageSignals) {
+    console.log(`  ${c.dim}Page signals skipped (--no-page-signals)${c.reset}`);
+  }
+
+  // ─── Authority presence (Wikipedia + Reddit + GitHub if dev-tool, cached) ───
+  // Off-page signals AI engines weight heavily. APIs are free public
   // endpoints with no auth — we run once per report and cache.
   if (!latest.authorityPresence && latest.brand && !args.noAuthority) {
-    console.log(`  ${c.dim}Checking Wikipedia + Reddit for ${latest.brand}...${c.reset}`);
+    console.log(`  ${c.dim}Checking authority signals for ${latest.brand}...${c.reset}`);
     try {
-      latest.authorityPresence = await checkAuthorityPresence(latest.brand);
+      // Pass domain + category + pageSignals so getAuthorityProfile() can
+      // promote a dev-tool brand to also check GitHub (alongside wiki+reddit).
+      // pageSignals.homepage.headings is the strongest signal when init
+      // didn't fill category — it's brand-authored text.
+      // GITHUB_TOKEN env var is read directly when present (60→5000 req/h).
+      latest.authorityPresence = await checkAuthorityPresence(latest.brand, {
+        domain: latest.domain,
+        category: latest.category,
+        pageSignals: latest.pageSignals,
+      });
       await persistSnapshot(latest);
       const ap = latest.authorityPresence;
       const wiki = ap.wikipedia.found ? `${c.green}wiki✓${c.reset}` : `${c.yellow}wiki✗${c.reset}`;
       const red = ap.reddit.found ? `${c.green}reddit✓${c.reset} (${ap.reddit.mentionCount})` : `${c.yellow}reddit✗${c.reset}`;
-      console.log(`  ${wiki} · ${red}`);
+      const gh = ap.github
+        ? (ap.github.found ? `${c.green}gh✓${c.reset}` : `${c.yellow}gh✗${c.reset}`)
+        : '';
+      console.log(`  ${wiki} · ${red}${gh ? ' · ' + gh : ''}`);
     } catch (err) {
       console.log(`  ${c.yellow}⚠ Authority check skipped: ${errMsg(err)}${c.reset}`);
     }
@@ -2373,29 +2484,6 @@ async function cmdReport(args = {}) {
     }
   } else if (latest.crawlability) {
     console.log(`  ${c.dim}Crawlability audit loaded from cache${c.reset}`);
-  }
-
-  // ─── v1.1: Page signals (own-domain HTML crawl, cached) ───
-  // Surfaces H1/H2 patterns, answer-capsule coverage, Schema.org block
-  // count + types, FAQ count. Pure HTTP fetch, no LLM cost.
-  if (!latest.pageSignals && latest.domain && !args.noPageSignals) {
-    console.log(`  ${c.dim}Crawling own-domain page signals (${latest.domain})...${c.reset}`);
-    try {
-      latest.pageSignals = await checkPageSignals(latest.domain);
-      await persistSnapshot(latest);
-      const ps = latest.pageSignals.homepage;
-      if (ps?.ok) {
-        console.log(`  ${c.green}✓${c.reset} h1:${ps.headings.h1.count} h2:${ps.headings.h2.count} capsules:${ps.answerCapsules.coverage}% schemas:${ps.schemaOrg.blockCount}`);
-      } else {
-        console.log(`  ${c.yellow}⚠ Page signals: ${ps?.error || 'unavailable'}${c.reset}`);
-      }
-    } catch (err) {
-      console.log(`  ${c.yellow}⚠ Page signals skipped: ${errMsg(err)}${c.reset}`);
-    }
-  } else if (latest.pageSignals) {
-    console.log(`  ${c.dim}Page signals loaded from cache${c.reset}`);
-  } else if (args.noPageSignals) {
-    console.log(`  ${c.dim}Page signals skipped (--no-page-signals)${c.reset}`);
   }
 
   // ─── v1.1: Entity graph (cross-platform sameAs reciprocity, cached) ───
@@ -2502,14 +2590,21 @@ async function cmdReport(args = {}) {
 
   // v0.7 — AEO Mission Control metadata payload (privacy-stripped allow-list).
   // Skipped entirely when --no-mc-block is passed.
-  // Read package version once — used by both the MC bridge metadata and the
-  // footer colophon. Hoisted out of the noMcBlock branch so the footer line
-  // always shows it (e.g. `· v0.3.0 · run_260423`).
+  // Read package metadata once — version feeds MC bridge + footer colophon,
+  // repository URL feeds the «open source» footer link. Hoisted out of the
+  // noMcBlock branch so the footer always shows them.
   let trackerVersion = '0.0.0';
+  let trackerRepoUrl = '';
   try {
     const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf-8'));
     trackerVersion = pkg.version || trackerVersion;
-  } catch { /* version unknown — falls through to '0.0.0' */ }
+    // package.json "repository" can be a string or an { url, type } object.
+    // npm convention strips "git+" prefix and ".git" suffix for display.
+    const rawRepo = typeof pkg.repository === 'string'
+      ? pkg.repository
+      : (pkg.repository && pkg.repository.url) || '';
+    trackerRepoUrl = String(rawRepo).replace(/^git\+/, '').replace(/\.git$/, '');
+  } catch { /* package metadata unreadable — falls through to defaults */ }
 
   let mcMetadata = null;
   let daysSinceRun = 0;
@@ -2551,7 +2646,7 @@ async function cmdReport(args = {}) {
     const html = renderHtml(
       buildHtmlSummary(snapshots, rawResponses),
       snapshots,
-      { mcMetadata, daysSinceRun, noMcBlock: args.noMcBlock, pkgVersion: trackerVersion },
+      { mcMetadata, daysSinceRun, noMcBlock: args.noMcBlock, pkgVersion: trackerVersion, repoUrl: trackerRepoUrl },
     );
     await writeFile(htmlOutPath, html);
   }
@@ -3048,9 +3143,19 @@ ${c.bold}Usage:${c.reset}
                                         Use for CI / email diffs / lightweight automation.
   aeo-tracker report --no-open          Write report.{md,html} but don't auto-open the browser.
   aeo-tracker report [--no-authority] [--no-entity-graph] [--no-page-signals] [--no-pricing]
-                           Skip optional fetch-heavy checks (Wikipedia/Reddit, sameAs reciprocity,
-                           own-domain HTML crawl, competitor pricing pages). Use behind a corp VPN,
-                           when rate-limited, or for a fully offline report. Cached results still load.
+                           Skip optional fetch-heavy checks (Wikipedia/Reddit/GitHub authority,
+                           sameAs reciprocity, own-domain HTML crawl, competitor pricing pages).
+                           Use behind a corp VPN, when rate-limited, or for a fully offline report.
+                           Cached results still load.
+  aeo-tracker report --refresh-cache=<fields>
+                           Force-refresh cached fields before report runs. Use when client's site
+                           changed and you want fresh signals without rerunning a full snapshot.
+                           Fields (CSV): pageSignals, authorityPresence, crawlability,
+                                         citationClassification, outreachTemplates, entityGraph,
+                                         competitorPricing, llmActions, adsDetected
+                           Shortcut:     --refresh-cache=all (refresh every cached field)
+                           Examples:     --refresh-cache=pageSignals,authorityPresence
+                                         --refresh-cache=all
   aeo-tracker export       Flatten all aeo-responses/*/_summary.json to CSV (default) or JSON.
   aeo-tracker export --format=json --output=runs.json
   aeo-tracker crawl-stats --log-file=path   Parse Apache/nginx access log → AI bot crawl frequency
@@ -3147,6 +3252,11 @@ const { values, positionals } = parseArgs({
     'no-entity-graph': { type: 'boolean', default: false },
     'no-page-signals': { type: 'boolean', default: false },
     'no-pricing':      { type: 'boolean', default: false },
+    // v0.4 — invalidate one or more cached fields before report runs so
+    // their fetchers re-run (instead of reading stale data from
+    // _summary.json). Comma-separated field names, or "all" to refresh
+    // every refreshable field. See REFRESHABLE_FIELDS in cmdReport.
+    'refresh-cache':   { type: 'string' },
     // v0.7 — basket versioning (additive vs replace on --queries-only)
     'add-queries': { type: 'boolean', default: false },
     'replace-queries': { type: 'boolean', default: false },
@@ -3202,6 +3312,7 @@ try {
       noEntityGraph:  values['no-entity-graph'],
       noPageSignals:  values['no-page-signals'],
       noPricing:      values['no-pricing'],
+      refreshCache:   values['refresh-cache'],
     });
   } else if (command === 'export') {
     await cmdExport({ format: values.format || 'csv', output: values.output });
