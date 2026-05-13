@@ -38,7 +38,7 @@ aeo-tracker init --yes --brand=YOURBRAND --domain=YOURDOMAIN.COM --auto \
 
 ---
 
-`@webappski/aeo-tracker` is a Node.js CLI that measures how often AI answer engines mention your brand, tracks your position in ranked AI answers, extracts competitor mentions, saves verbatim AI quotes for audit, and produces a prioritised, engine-specific action plan (e.g. *"email editors of firstpagesage.com to get added to their AEO agency list — cited 2× by AI this run"*).
+`@webappski/aeo-tracker` is a Node.js CLI that measures how often AI answer engines mention your brand, tracks your position in ranked AI answers, extracts competitor mentions, saves verbatim AI quotes for audit, and produces a prioritised, engine-specific action plan (e.g. *"Mission 7: Publish a comparison page targeting the agency-intent cluster — NoGood, Omniscient Digital, and First Page Sage repeat across 3/3 engines for Q1; recommended Day 7, ≈2h."*).
 
 **Minimum setup needs 2 API keys: OpenAI + Gemini.** That covers the ChatGPT and Gemini columns of the report. Add `ANTHROPIC_API_KEY` to unlock the Claude column or `PERPLEXITY_API_KEY` for the Perplexity column. OpenAI + Gemini are required because they also power the two-model extractor described below — Anthropic and Perplexity are strictly optional engine expansions. Full pricing breakdown in [Key facts](#key-facts) below.
 
@@ -61,6 +61,13 @@ Zero runtime dependencies, MIT license. Works with Node.js 18+ on macOS, Linux, 
 - **Resilience:** `init --auto` retries across providers on billing/auth/rate-limit errors; **auto-recovers from validator blocks** by swapping in validated alternatives with intent-diversity ranking; actionable error panels on every failure path (top-up links, regenerate-key hints, `--keywords` escape hatch) — no raw Node stack traces unless `AEO_DEBUG=1`
 - **Runtime:** Node.js ≥18, zero runtime dependencies
 - **License:** MIT open source, source code on GitHub
+- **Security & Privacy:** No telemetry. No analytics. No traffic to `webappski.com`. Raw AI responses stay on your disk in `aeo-responses/`. API keys are read from `process.env` at run time and **never written to disk** — `.aeo-tracker.json` stores only the *names* of the env vars, never their values. No SOC2 (single-developer tool — see [Behind this tool](#behind-this-tool) for bus-factor language).
+
+### Known limitations in 0.3.x (read before installing)
+
+- **Outreach email-template rendering is muted** in HTML + Markdown reports (`html.js:367`, `markdown.js:84`). The generator still runs and caches per-domain drafts in `_summary.json::outreachTemplates`, but the report doesn't render them because the current pitch-generator treats every cited domain as a publisher — including direct competitors. Re-enables in 0.3.1+ once the publisher / competitor / community domain-type classifier ships. Workaround: copy the top-3 domains from the `04 Citations` table and pitch by hand using the citation context.
+- **Listicle-pitch KPI is descriptive, not actionable** — shows a count + ratio, not URLs you can pitch. Actionable URL grid with `[Copy pitch]` buttons + state tracking ships in 0.4.
+- For full known-issue tracking see [`TECH_DEBT.md`](./TECH_DEBT.md).
 
 ### How your API keys are used
 
@@ -358,7 +365,7 @@ The hero is a 4-cell bento: **UVI** (Unified Visibility Index, 0-100 composite o
 
 ### 01 Overview
 
-Score trend chart with axes and an annotation for the most recent inflection. Listicle-pitch KPI surfaces the canonical sources that get cited 2×+ across engines (the pages your outreach budget should target). Topic-cluster bars group queries by shared content words and show visibility per cluster. Top-3 actionable gaps preview pulls from `05 Actions` for an at-a-glance lift list.
+Score trend chart with axes and an annotation for the most recent inflection. Listicle-pitch KPI surfaces a count of canonical sources cited 2×+ across engines — a category-level signal showing the size of the repeat-citation pool. **Note (0.3.x):** the KPI is descriptive today (count + ratio). An actionable URL grid with `[Copy pitch]` buttons + state tracking (`PITCHED / RESPONDED / LANDED`) ships in 0.4; until then, drill into the `04 Citations` section for the actual URLs. Topic-cluster bars group queries by shared content words and show visibility per cluster. Top-3 actionable gaps preview pulls from `05 Actions` for an at-a-glance lift list.
 
 ### 01 Overview → 02 Visibility — score trend + per-engine cards
 
@@ -374,13 +381,15 @@ The top of the crop shows the **query × engine matrix** with the three test que
 
 ### 04 Citations — domain share-of-voice + outreach drafts
 
-Top-10 publishers ranked by citation count + share % across all queries, with your own domain marked. Side-by-side: a by-category breakdown (Reviews / Forums / Q&A / News / Reference / Social / Agency / Blog / Docs / Vendor / Gov-Edu / Other) with per-row outreach hint. Below: **outreach email templates** for the top-3 cited domains — one classify-tier LLM call drafts a short, specific email (subject < 60 chars, body < 150 words, soft CTA) per publisher. Cached in `_summary.json::outreachTemplates` — `report` re-runs do **not** re-spend.
+Top-10 publishers ranked by citation count + share % across all queries, with your own domain marked. Side-by-side: a by-category breakdown (Reviews / Forums / Q&A / News / Reference / Social / Agency / Blog / Docs / Vendor / Gov-Edu / Other) with per-row outreach hint.
+
+> ⚠️ **Outreach drafts — muted in 0.3.x, returns in 0.3.1+.** The outreach-template generator (`lib/report/outreach-templates.js`) builds emails for the top-3 cited domains and caches them in `_summary.json::outreachTemplates`, but the rendering pipeline in HTML + Markdown is currently kill-switched (`html.js:367`, `markdown.js:84`). Reason: the generator treats every cited domain as a publisher, so direct competitors (scrunch.io, minonta.com, peec.ai, etc.) get pitched as if they were listicle editors — not actionable. The cache populates so no data is lost; rendering re-enables once the publisher / competitor / community domain-type classifier ships (tracked in `TECH_DEBT.md`). For the 0.3.x window, copy the top-3 domains from the «04 Citations» table and pitch them by hand using the citation context surfaced in the run.
 
 ### 04 Citations tail → 05 Actions — outreach drafts + ordered missions
 
-![04 Citations outreach-draft cards for top-cited domains (Scrunch.AI, Minuttia) above 05 Actions — "what to ship this week"](./examples/screenshot-05-actions.png)
+![04 Citations outreach-draft cards (rendering muted in 0.3.x — see §04 callout) above 05 Actions — "what to ship this week"](./examples/screenshot-05-actions.png)
 
-The top of the crop shows the **outreach templates** from 04 Citations — LLM-drafted emails for the top-3 cited domains (Scrunch.AI, Minuttia) with subject/body/CTA fields tuned to each publisher. Below: the start of **05 Actions — what to ship this week** — a heuristic mission-by-mission plan, not a generic SEO checklist. Each mission carries a recommended-day label (Day N) with **Week-fallback** when distribution is skewed (Week 1 / Week 2 / Week 3 / Week 4 instead of Day N when the gap list is sparse); the chip is hidden entirely when uncomputable so the user doesn't see a misleading "Day 30+" placeholder. Work at your pace — the day labels are recommendations, not deadlines. Each card is grounded in this run's data — specific competitors to displace, specific citation gaps to close, specific URLs to pitch. Promote row above the bento (visible in screenshot-01-hero) contains the **paste-into-AI 30-mission plan** bridge card — a single-state v8 article block scoped under `.mc-bridge`, with the brand-context JSON inline, a one-tap copy button, and a setup-grab clipboard hook — see [The paste-into-AI 30-mission plan — what makes aeo-tracker unique](#the-paste-into-ai-30-mission-plan--what-makes-aeo-tracker-unique).
+The top of the crop shows where the **outreach templates** from 04 Citations would render — LLM-drafted emails for the top-3 cited domains (Scrunch.AI, Minuttia) with subject/body/CTA fields tuned to each publisher. **Rendering is muted in 0.3.x** (see callout in §04 above — re-enables in 0.3.1+ once the domain-type classifier ships). The screenshot above was captured before the kill-switch landed; the data still populates the cache, just isn't drawn on the page. Below: the start of **05 Actions — what to ship this week** — a heuristic mission-by-mission plan, not a generic SEO checklist. Each mission carries a recommended-day label (Day N) with **Week-fallback** when distribution is skewed (Week 1 / Week 2 / Week 3 / Week 4 instead of Day N when the gap list is sparse); the chip is hidden entirely when uncomputable so the user doesn't see a misleading "Day 30+" placeholder. Work at your pace — the day labels are recommendations, not deadlines. Each card is grounded in this run's data — specific competitors to displace, specific citation gaps to close, specific URLs to pitch. Promote row above the bento (visible in screenshot-01-hero) contains the **paste-into-AI 30-mission plan** bridge card — a single-state v8 article block scoped under `.mc-bridge`, with the brand-context JSON inline, a one-tap copy button, and a setup-grab clipboard hook — see [The paste-into-AI 30-mission plan — what makes aeo-tracker unique](#the-paste-into-ai-30-mission-plan--what-makes-aeo-tracker-unique).
 
 ### 05 Actions tail → 06 Diagnostics — ordered moves + readiness composite
 

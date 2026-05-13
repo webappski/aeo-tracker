@@ -1,6 +1,6 @@
 {
   "name": "@webappski/aeo-tracker",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Open-source AEO tracker for ChatGPT, Claude, Gemini, Perplexity. Free alternative to Otterly, Profound, Peec. Exports a JSON prompt — paste into any AI for a personalized 30-mission AEO plan (≈1–3 hours per mission, work at your pace). Zero dependencies, MIT, local-first.",
   "type": "module",
   "bin": {

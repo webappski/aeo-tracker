@@ -2,11 +2,29 @@
 
 All notable changes to `@webappski/aeo-tracker`.
 
-## [0.3.0] — 2026-05-09
+## [0.3.1] — 2026-05-13
 
-Minor release on top of v0.2.7. **No breaking changes** to the v0.2.x CLI surface, config schema, or `_summary.json` consumers. Single jump on npm covering an internal dev cycle (tracked locally as 0.3.0 → 0.4.0 → 0.5.0 → 0.6.0 between 2026-04-23 and 2026-04-27, plus the security review and `--depth` work in early May).
+Documentation hotfix on top of v0.3.0. **No code changes.** Independent persona review (solo founder / agency operator / B2B SaaS lead) flagged docs-vs-reality drift in v0.3.0; this release closes the gap.
 
-The core narrative: catch up to hosted competitors (Profound, Peec.ai, Otterly, AthenaHQ, Wellows, OneGlanse, Brandlight, Knowatoa) on capability without giving up the open-source / direct-API positioning.
+### Fixed — documentation drift
+
+- **Outreach kill-switch disclosure.** The outreach-template generator caches drafts in `_summary.json::outreachTemplates` but rendering in HTML + Markdown is muted via kill-switch (`html.js:367`, `markdown.js:84`) — see note under [0.3.0] below. **0.3.0 README documented the feature in 5+ places without warning the user about the muted rendering, including a screenshot caption claiming to show outreach-draft cards that no fresh install can produce.** README §04 Citations now carries a yellow callout explaining the kill-switch and the workaround (pitch top-3 domains by hand using citation context). README §04 Citations tail screenshot caption flagged with "rendering muted in 0.3.x" qualifier. Re-enables in 0.3.1+ once the publisher / competitor / community domain-type classifier ships.
+- **Hero example replaced.** Line 41 hero pitch used an "email editors of firstpagesage.com to get added to their AEO agency list — cited 2× by AI this run" example — which is literally the killed feature. Replaced with a live-feature example referencing the `05 Actions` mission stack instead.
+- **Listicle-pitch KPI honesty.** README §01 Overview previously described the listicle-pitch KPI as "surfaces the canonical sources that get cited 2×+ across engines (the pages your outreach budget should target)" — implying URLs the user can immediately pitch. Reality is a count + ratio. Rephrased to describe what 0.3.x ships (descriptive count) with explicit note that the actionable URL grid + `[Copy pitch]` + state tracking lands in 0.4.
+- **Security & Privacy box** added to `Key facts` — explicit one-liner on no telemetry, no traffic to webappski.com, API keys never written to disk, no SOC2 (single-developer tool — bus-factor honesty).
+- **Known limitations in 0.3.x section** added below `Key facts` — surfaces both the outreach kill-switch and the listicle KPI gap before installation, not after.
+- **CHANGELOG narrative competitor list** aligned with README's 11 commercial vendors (Otterly / Profound / Peec / Bluefish / AthenaHQ / Goodie / HubSpot AEO Grader / Evertune / Ahrefs Brand Radar / Semrush AI Toolkit / Discovered Labs) — previous draft mentioned Wellows / OneGlanse / Brandlight / Knowatoa which weren't in README.
+- **CHANGELOG `[0.3.0]` heading date** corrected from `2026-05-09` (internal milestone) to `2026-05-13` (actual npm publish date).
+
+### Unchanged
+
+- Engine code, providers, pricing, model discovery, two-model extractor, sentiment classifier, crawlability audit, authority profile, all 0.3.0 features. CLI surface and `_summary.json` schema identical to 0.3.0.
+
+## [0.3.0] — 2026-05-13
+
+Major feature release on top of v0.2.7. **No breaking changes** to the v0.2.x CLI surface, config schema, or `_summary.json` consumers. Single jump on npm covering an internal dev cycle (tracked locally as 0.3.0 → 0.4.0 → 0.5.0 → 0.6.0 between 2026-04-23 and 2026-04-27, plus the security review and `--depth` work in early May, finalised + published 2026-05-13).
+
+The core narrative: catch up to hosted competitors (Otterly, Profound, Peec.ai, Bluefish, AthenaHQ, Goodie, HubSpot AEO Grader, Evertune, Ahrefs Brand Radar, Semrush AI Toolkit, Discovered Labs) on capability without giving up the open-source / direct-API positioning.
 
 ### Costs (read before running)
 
