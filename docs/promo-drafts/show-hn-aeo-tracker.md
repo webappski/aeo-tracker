@@ -17,8 +17,8 @@ Backup variants:
 **Body (the first comment — HN convention):**
 
 ```
-Hey HN — I run a small AEO consulting practice and got tired of paying $200-$500/mo for
-hosted AI-visibility dashboards (Profound, Peec.ai, Otterly) when the actual job is just
+Hey HN — I run a small AEO consulting practice and got tired of paying for hosted
+AI-visibility dashboards (Profound, Peec.ai, Otterly) when the actual job is just
 "call N LLM APIs with the same prompts every week and diff the results."
 
 aeo-tracker is the CLI version of that. It calls the official ChatGPT, Gemini, Claude,
@@ -40,7 +40,7 @@ What's in v0.3 (just shipped):
 - nginx/Apache log parser to count actual AI-bot crawl frequency on your site
 
 Why it might be useful to you:
-- You're an indie founder watching AI search take traffic and want a $5/run baseline.
+- You're an indie founder watching AI search take traffic and want a few-cents-per-run baseline.
 - You're a dev-centric agency with ≤10 clients and don't need a hosted UI.
 - You want to see the raw responses on disk (aeo-responses/<date>/) and own the data.
 
@@ -80,7 +80,8 @@ weeks of "why doesn't Claude know us" misery saved.
 
 **Risks to anticipate:**
 - "Why not just use Profound's free tier?" → Profound has no free tier as of 2026-04;
-  starts at $99/mo. Our $5/run beats that for indie scale.
+  it's a paid hosted dashboard. Our pay-only-for-your-LLM-API-spend model beats that
+  for indie scale.
 - "Doesn't Claude already have a bot? Why CLI?" → CLI runs against API, not bot. Different
   layer — you're observing what the model says, not optimizing for what the bot crawls.
 - "Show me the raw responses." → Link `aeo-responses/2026-04-23/` example in repo (need

@@ -282,8 +282,15 @@ await test('buildMcMetadata: regionContext rendered when --geo produced signal',
 console.log('\nBUG 5 — Where to get mentioned: deny-list');
 
 await test('OUTREACH_HOST_DENY_LIST includes documented developer/static hosts', () => {
-  const expected = ['.github.io', '.github.com', '.gitlab.io', '.netlify.app', '.vercel.app', '.glitch.me'];
-  for (const e of expected) assert.ok(OUTREACH_HOST_DENY_LIST.includes(e), `missing entry: ${e}`);
+  // Wildcard subdomain entries (the normal citation shape).
+  const wildcards = ['.github.io', '.github.com', '.gitlab.io', '.netlify.app', '.vercel.app', '.glitch.me'];
+  for (const e of wildcards) assert.ok(OUTREACH_HOST_DENY_LIST.includes(e), `missing wildcard entry: ${e}`);
+  // Bare apex entries — github.com is deliberately EXCLUDED (the bare apex is
+  // a legitimate outreach surface for repos / awesome-lists / READMEs).
+  const bareApexes = ['github.io', 'gitlab.io', 'netlify.app', 'vercel.app', 'glitch.me', 'pages.dev', 'web.app', 'firebaseapp.com'];
+  for (const e of bareApexes) assert.ok(OUTREACH_HOST_DENY_LIST.includes(e), `missing bare-apex entry: ${e}`);
+  assert.ok(!OUTREACH_HOST_DENY_LIST.includes('github.com'),
+    'github.com bare apex must remain a legitimate outreach target (repos, READMEs, awesome-lists)');
 });
 
 await test('OUTREACH_HOST_DENY_LIST includes documented tutorial sites', () => {
@@ -355,13 +362,31 @@ await test('isDenyListedOutreachHost: case-insensitive against mixed-case input'
   assert.equal(isDenyListedOutreachHost('W3SCHOOLS.COM'), true);
 });
 
-await test('isDenyListedOutreachHost: bare github.io is NOT denied (only subdomains)', () => {
-  // OUTREACH_HOST_DENY_LIST entry is `.github.io` (leading dot = wildcard
-  // subdomain). Bare github.io has no tenant container so it falls through.
-  // Bare hosts on the list (teamtreehouse.com, w3schools.com) still match
-  // via the exact-match branch.
-  assert.equal(isDenyListedOutreachHost('github.io'), false);
-  assert.equal(isDenyListedOutreachHost('vercel.app'), false);
+await test('isDenyListedOutreachHost: bare apex of developer-hosting domains is denied', () => {
+  // Regression — May-2026 typelessform.com dogfood run rendered «Pitch a
+  // mention or guest post on github.io» in the «Where to get mentioned»
+  // table. The bare apex of github.io / vercel.app / netlify.app / etc. has
+  // no editorial surface; it is the hosting platform itself, not a publisher.
+  // Both wildcard (`alice.github.io`) and bare (`github.io`) forms must be
+  // denied per provider — see OUTREACH_HOST_DENY_LIST docs.
+  assert.equal(isDenyListedOutreachHost('github.io'),       true);
+  assert.equal(isDenyListedOutreachHost('gitlab.io'),       true);
+  assert.equal(isDenyListedOutreachHost('vercel.app'),      true);
+  assert.equal(isDenyListedOutreachHost('netlify.app'),     true);
+  assert.equal(isDenyListedOutreachHost('glitch.me'),       true);
+  assert.equal(isDenyListedOutreachHost('pages.dev'),       true);
+  assert.equal(isDenyListedOutreachHost('web.app'),         true);
+  assert.equal(isDenyListedOutreachHost('firebaseapp.com'), true);
+});
+
+await test('isDenyListedOutreachHost: defensive normalisation (trailing dot, www., mixed case)', () => {
+  // Hostnames are case-insensitive (RFC 3986). DNS-root form `host.` and
+  // www-prefix form `www.host` both appear in extractor output; the matcher
+  // must canonicalise before comparing.
+  assert.equal(isDenyListedOutreachHost('github.io.'),       true,  'trailing dot');
+  assert.equal(isDenyListedOutreachHost('GitHub.IO'),        true,  'mixed case bare apex');
+  assert.equal(isDenyListedOutreachHost('www.github.io'),    true,  'www-prefix bare apex');
+  assert.equal(isDenyListedOutreachHost('Alice.Github.IO.'), true,  'subdomain + trailing dot');
 });
 
 // ─── BUG 5 spillover surfaces — same deny-list must apply everywhere ───
@@ -455,6 +480,104 @@ await test('filterOwnDomainFromTopDomains strips deny-listed hosts (outreach LLM
     'acme.com',
   );
   assert.deepEqual(out.map(d => d.host), ['g2.com']);
+});
+
+// ─── BUG 5b: bare-apex of developer-hosting domains leaks through ───
+//
+// May-2026 typelessform.com dogfood run: «Where to get mentioned» rendered
+// `| github.io | Blog / agency | … | Pitch a mention or guest post |`.
+// Root cause: the denylist entry `.github.io` was scoped to subdomains only,
+// so the bare apex fell through every outreach surface. Fix added bare-apex
+// entries to OUTREACH_HOST_DENY_LIST for every hosting provider. This block
+// asserts the mixed scenario (bare apex + subdomain in same fixture) is
+// suppressed across every outreach action surface in the report.
+
+console.log('\nBUG 5b — bare-apex hosting domains must be denied across all outreach surfaces');
+
+await test('end-to-end: bare github.io + alice.github.io never reach any outreach surface', () => {
+  const snapshot = {
+    brand: 'Acme', domain: 'acme.com', score: 10,
+    results: [{
+      query: 'Q1', queryText: 'best crm', provider: 'openai',
+      mention: 'no',
+      competitors: ['Rival'], competitorsUnverified: [],
+      canonicalCitations: [
+        'https://github.io/something',         // hallucinated bare apex
+        'https://alice.github.io/something',   // real-shape subdomain
+        'https://g2.com/listing',              // legit publisher
+      ],
+    }],
+    topCanonicalSources: [
+      { url: 'https://github.io/something',       count: 9 },  // hallucinated bare
+      { url: 'https://alice.github.io/something', count: 7 },  // subdomain
+      { url: 'https://g2.com/listing',            count: 5 },
+    ],
+    topDomains: [
+      { host: 'github.io',        count: 9, share: 0.40 },  // hallucinated bare
+      { host: 'alice.github.io',  count: 7, share: 0.31 },  // subdomain
+      { host: 'g2.com',           count: 5, share: 0.22 },
+    ],
+    topCompetitors: [{ name: 'Rival', count: 1 }],
+    citationClassification: null,
+  };
+
+  // Surface 1: «Where to get mentioned» table
+  const canonical = sectionCanonicalSources([snapshot]);
+  assert.equal(canonical.includes('github.io'), false,
+    'github.io (bare or subdomain) must NOT appear in «Where to get mentioned»');
+  assert.equal(canonical.includes('g2.com'), true,
+    'legit publisher must still appear');
+
+  // Surface 2: per-engine «Pitch <host>» card input
+  const topHosts = topCitedHostsForProvider(snapshot.results, 'openai', 'acme.com', 5);
+  assert.equal(topHosts.includes('github.io'), false,
+    'github.io bare must not surface to engine-actions card');
+  assert.equal(topHosts.includes('alice.github.io'), false,
+    'alice.github.io subdomain must not surface to engine-actions card');
+  assert.deepEqual(topHosts, ['g2.com'],
+    'only legit publisher must reach engine-actions card');
+
+  // Surface 3: «Actions this week» «pitch top source» step
+  const nextSteps = sectionNextSteps([snapshot]);
+  assert.equal(nextSteps.includes('github.io'), false,
+    'github.io must not appear in «Actions this week»');
+
+  // Surface 4: «Actionable Gaps» — «Pitch X to add brand alongside …»
+  const gaps = sectionActionableGaps([snapshot]);
+  assert.equal(gaps.includes('github.io'), false,
+    'github.io must not appear as a «Pitch …» target in Actionable Gaps');
+  assert.equal(gaps.includes('g2.com'), true,
+    'legit publisher must reach Actionable Gaps');
+
+  // Surface 5: outreach-template LLM prompt input (topDomains)
+  const outreachInput = filterOwnDomainFromTopDomains(snapshot.topDomains, 'acme.com');
+  assert.deepEqual(outreachInput.map(d => d.host), ['g2.com'],
+    'outreach LLM must receive only legit publishers — no github.io spend');
+});
+
+await test('end-to-end: all-denylisted citations → muted fallback, no leak', () => {
+  // Every candidate is denylisted (bare or subdomain across all hosting
+  // providers). The fallback message must surface and no row must render.
+  const snapshot = {
+    brand: 'Acme', domain: 'acme.com', score: 5,
+    results: [],
+    topCanonicalSources: [
+      { url: 'https://github.io/post',           count: 9 },
+      { url: 'https://vercel.app/x',             count: 7 },
+      { url: 'https://my-project.netlify.app/y', count: 6 },
+      { url: 'https://w3schools.com/z',          count: 4 },
+    ],
+    citationClassification: null,
+  };
+  const out = sectionCanonicalSources([snapshot]);
+  assert.equal(out.includes('No high-authority outreach targets surfaced this run.'), true,
+    'muted fallback must surface when every candidate is denylisted');
+  assert.equal(out.includes('| Site | Type | About |'), false,
+    'no table when every candidate is denylisted');
+  assert.equal(out.includes('github.io'), false);
+  assert.equal(out.includes('vercel.app'), false);
+  assert.equal(out.includes('netlify.app'), false);
+  assert.equal(out.includes('w3schools.com'), false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

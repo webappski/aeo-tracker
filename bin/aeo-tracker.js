@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * @webappski/aeo-tracker v0.3.0
- * Open-source CLI for tracking brand visibility across AI answer engines.
+ * aeo-platform v1.0.0-rc.1
+ * Open-source AEO platform — measure, audit, diagnose, recommend, and plan-generate
+ * brand visibility across ChatGPT, Claude, Gemini, and Perplexity.
  * https://webappski.com | MIT License
  */
 
@@ -70,7 +71,7 @@ const c = USE_COLOR
 
 // ─── Stale artifact cleanup ─────────────────────────────────────────
 //
-// `aeo-tracker report` writes to aeo-reports/<latest-date>/. Older date
+// `aeo-platform report` writes to aeo-reports/<latest-date>/. Older date
 // directories accumulate orphaned report.md / report.html from previous tool
 // versions or out-of-cycle runs — those become misleading after a layout
 // rewrite (e.g. v0.5 bento) because the old reports still render the old
@@ -235,8 +236,8 @@ const PROVIDER_CALL_FN = { openai: 'callOpenAI', anthropic: 'callAnthropic', gem
 //   2. Re-generating a summary with new extractor logic from historical data.
 // Stale-data caveat: the raw engine responses reflect the capture date, not
 // today — citations and competitor sets may have drifted. Activated by:
-//   aeo-tracker run --replay                    # replay the most recent snapshot
-//   aeo-tracker run --replay-from=2026-04-22    # replay a specific date
+//   aeo-platform run --replay                    # replay the most recent snapshot
+//   aeo-platform run --replay-from=2026-04-22    # replay a specific date
 
 function _extractFromRaw(providerName, raw) {
   if (providerName === 'anthropic') {
@@ -290,7 +291,7 @@ async function _tryReplay(qi, provider, srcDate) {
  * `lastFullRun` field and return its age in days. Returns null if no prior
  * full run is recorded — caller treats null as "always prompt".
  *
- * Used by `aeo-tracker run --depth=auto` to decide when training-data
+ * Used by `aeo-platform run --depth=auto` to decide when training-data
  * baseline is due for a refresh.
  */
 async function _readLastFullRunStaleness() {
@@ -475,7 +476,7 @@ async function runValidationFlow({
     rl.question(`${c.yellow}Save/run anyway? [y/N] ${c.reset}`, a => { rl.close(); resolve(a.trim()); });
   });
   if (!/^y/i.test(ans)) {
-    console.log(`${c.yellow}Aborted. Tip: aeo-tracker init --queries-only to regenerate.${c.reset}`);
+    console.log(`${c.yellow}Aborted. Tip: aeo-platform init --queries-only to regenerate.${c.reset}`);
     if (onAbort) onAbort(); else process.exit(0);
   }
   return v;
@@ -658,19 +659,19 @@ async function cmdInit(opts = {}) {
     : (q) => new Promise(resolve => rl.question(q, resolve));
   const closeRl = () => rl && rl.close();
 
-  console.log(`\n${c.bold}@webappski/aeo-tracker — init${opts.queriesOnly ? ' --queries-only' : ''}${c.reset}\n`);
+  console.log(`\n${c.bold}aeo-platform — init${opts.queriesOnly ? ' --queries-only' : ''}${c.reset}\n`);
 
   // ── --queries-only: re-suggest queries without touching the rest of config ──
   if (opts.queriesOnly) {
     if (!existsSync(CONFIG_FILE)) {
-      console.error(`${c.red}No ${CONFIG_FILE} found. Run: aeo-tracker init${c.reset}`);
+      console.error(`${c.red}No ${CONFIG_FILE} found. Run: aeo-platform init${c.reset}`);
       closeRl();
       process.exit(1);
     }
     const existing = JSON.parse(await readFile(CONFIG_FILE, 'utf-8'));
     const { brand, domain: existingDomain, providers: existingProviders } = existing;
     if (!brand || !existingDomain) {
-      console.error(`${c.red}Config is missing brand or domain — run aeo-tracker init first${c.reset}`);
+      console.error(`${c.red}Config is missing brand or domain — run aeo-platform init first${c.reset}`);
       closeRl();
       process.exit(1);
     }
@@ -831,7 +832,7 @@ async function cmdInit(opts = {}) {
       console.log(`  ${c.yellow}Mode: replace — basket forked at v${basketUpdate.basketVersion} (prior versions kept in basketHistory)${c.reset}`);
     }
     finalQueries.forEach((q, i) => console.log(`  Q${i + 1}: ${q}`));
-    console.log(`\nNext: ${c.cyan}aeo-tracker run${c.reset}\n`);
+    console.log(`\nNext: ${c.cyan}aeo-platform run${c.reset}\n`);
     closeRl();
     return;
   }
@@ -1011,7 +1012,7 @@ async function cmdInit(opts = {}) {
     console.log(`\nAdd to ~/.zshrc (or equivalent):`);
     console.log(`  export OPENAI_API_KEY=sk-proj-...`);
     console.log(`  export GEMINI_API_KEY=AIzaSy...`);
-    console.log(`Then: source ~/.zshrc && aeo-tracker init\n`);
+    console.log(`Then: source ~/.zshrc && aeo-platform init\n`);
     closeRl();
     process.exit(1);
   }
@@ -1373,7 +1374,7 @@ async function cmdInit(opts = {}) {
   console.log(`\n${c.green}✓ Created ${CONFIG_FILE}${c.reset}`);
   console.log(`  Brand: ${brand} | Domain: ${domain}`);
   console.log(`  Queries: ${queries.length}, Providers: ${Object.keys(providers).length}`);
-  console.log(`\nNext: ${c.cyan}aeo-tracker run${c.reset}\n`);
+  console.log(`\nNext: ${c.cyan}aeo-platform run${c.reset}\n`);
 }
 
 // Maps model ID prefixes to short display labels. More specific entries first.
@@ -1417,7 +1418,7 @@ async function cmdRun(options = {}) {
 
   // Load config
   if (!existsSync(CONFIG_FILE)) {
-    console.error(`${c.red}No ${CONFIG_FILE} found. Run: aeo-tracker init${c.reset}`);
+    console.error(`${c.red}No ${CONFIG_FILE} found. Run: aeo-platform init${c.reset}`);
     process.exit(1);
   }
 
@@ -1531,7 +1532,7 @@ async function cmdRun(options = {}) {
   const responseDir = join('aeo-responses', date);
   await mkdir(responseDir, { recursive: true });
 
-  console.log(`\n${c.bold}@webappski/aeo-tracker — run${c.reset}`);
+  console.log(`\n${c.bold}aeo-platform — run${c.reset}`);
   console.log(`${c.dim}Brand: ${brand} | Domain: ${domain} | Date: ${date}${c.reset}`);
   console.log(`${c.dim}Models: ${activeProviders.map(p => p.colLabel).join(', ')}${c.reset}`);
   console.log(`${c.dim}Queries: ${queries.length}${c.reset}\n`);
@@ -1990,10 +1991,10 @@ async function cmdRun(options = {}) {
     };
     origWrite(JSON.stringify(jsonOut, null, 2) + '\n');
   } else if (exitCode !== 3) {
-    // Next-step hint. Mirrors init's "Next: aeo-tracker run" convention.
+    // Next-step hint. Mirrors init's "Next: aeo-platform run" convention.
     // Skipped on exitCode 3 (all engines errored — no data to report) and in
     // --json mode (programmatic consumers parse the JSON only).
-    console.log(`\nNext: ${c.cyan}aeo-tracker report --html${c.reset}  ${c.dim}(or 'aeo-tracker report' for markdown-only)${c.reset}\n`);
+    console.log(`\nNext: ${c.cyan}aeo-platform report --html${c.reset}  ${c.dim}(or 'aeo-platform report' for markdown-only)${c.reset}\n`);
   }
 
   process.exit(exitCode);
@@ -2237,7 +2238,7 @@ async function cmdReport(args = {}) {
   const responsesDir = 'aeo-responses';
 
   if (!existsSync(responsesDir)) {
-    console.error(`${c.red}No aeo-responses/ directory found. Run: aeo-tracker run${c.reset}`);
+    console.error(`${c.red}No aeo-responses/ directory found. Run: aeo-platform run${c.reset}`);
     process.exit(1);
   }
 
@@ -2252,7 +2253,7 @@ async function cmdReport(args = {}) {
   }
 
   if (snapshots.length === 0) {
-    console.error(`${c.red}No _summary.json files found in aeo-responses/. Run: aeo-tracker run${c.reset}`);
+    console.error(`${c.red}No _summary.json files found in aeo-responses/. Run: aeo-platform run${c.reset}`);
     process.exit(1);
   }
 
@@ -2265,8 +2266,8 @@ async function cmdReport(args = {}) {
   // authorityPresence persist across report runs — efficient for
   // iteration but stale when the client's site changes.
   //
-  // Usage: aeo-tracker report --refresh-cache=pageSignals,authorityPresence
-  //        aeo-tracker report --refresh-cache=all
+  // Usage: aeo-platform report --refresh-cache=pageSignals,authorityPresence
+  //        aeo-platform report --refresh-cache=all
   const REFRESHABLE_FIELDS = [
     'pageSignals',          // own-domain H1/H2/schema-org crawl
     'authorityPresence',    // wikipedia/reddit/github
@@ -2343,7 +2344,7 @@ async function cmdReport(args = {}) {
     if (cfgReadError) {
       console.log(`  ${c.dim}Citation classification skipped: could not read ${CONFIG_FILE} (${errMsg(cfgReadError)})${c.reset}`);
     } else if (!category) {
-      console.log(`  ${c.dim}Citation classification skipped: no category in ${CONFIG_FILE}. Re-run: aeo-tracker init${c.reset}`);
+      console.log(`  ${c.dim}Citation classification skipped: no category in ${CONFIG_FILE}. Re-run: aeo-platform init${c.reset}`);
     } else {
       // Pick first provider with an available API key
       const providerEntry = Object.entries(providersCfg).find(([, p]) => process.env[p.env]);
@@ -2674,7 +2675,7 @@ async function cmdReport(args = {}) {
   }
 
   const loadedQuotes = Object.keys(rawResponses).length;
-  console.log(`\n${c.bold}@webappski/aeo-tracker — report${c.reset}`);
+  console.log(`\n${c.bold}aeo-platform — report${c.reset}`);
   console.log(`  ${snapshots.length} run${snapshots.length !== 1 ? 's' : ''} loaded (${snapshots[0].date} → ${latest.date})`);
   console.log(`  ${loadedQuotes} raw response${loadedQuotes !== 1 ? 's' : ''} available for verbatim quotes`);
   console.log(`  Latest score: ${c.bold}${latest.score}%${c.reset}`);
@@ -2707,7 +2708,7 @@ async function cmdReport(args = {}) {
 // ─── Commands (run-manual) ───
 
 async function cmdRunManual(argv) {
-  // Parse: aeo-tracker run-manual <provider> --from-dir <dir>
+  // Parse: aeo-platform run-manual <provider> --from-dir <dir>
   let providerName = null;
   let fromDir = null;
   for (let i = 0; i < argv.length; i++) {
@@ -2716,7 +2717,7 @@ async function cmdRunManual(argv) {
   }
 
   if (!providerName) {
-    console.error(`${c.red}Usage: aeo-tracker run-manual <provider> --from-dir <dir>${c.reset}`);
+    console.error(`${c.red}Usage: aeo-platform run-manual <provider> --from-dir <dir>${c.reset}`);
     console.error(`${c.dim}Providers: ${Object.keys(PROVIDERS).join(', ')}${c.reset}`);
     process.exit(1);
   }
@@ -2730,7 +2731,7 @@ async function cmdRunManual(argv) {
     process.exit(1);
   }
   if (!existsSync(CONFIG_FILE)) {
-    console.error(`${c.red}No ${CONFIG_FILE} found. Run: aeo-tracker init${c.reset}`);
+    console.error(`${c.red}No ${CONFIG_FILE} found. Run: aeo-platform init${c.reset}`);
     process.exit(1);
   }
 
@@ -2745,7 +2746,7 @@ async function cmdRunManual(argv) {
   const responseDir = join('aeo-responses', date);
   await mkdir(responseDir, { recursive: true });
 
-  console.log(`\n${c.bold}@webappski/aeo-tracker — run-manual${c.reset}`);
+  console.log(`\n${c.bold}aeo-platform — run-manual${c.reset}`);
   console.log(`${c.dim}Provider: ${providerLabel} | Source: ${fromDir}${c.reset}\n`);
 
   let extractionProvidersManual;
@@ -2912,7 +2913,7 @@ async function cmdRunManual(argv) {
 
   // Next-step hint (mirrors cmdRun). run-manual has no exitCode 3 or silent
   // mode, so no guards needed.
-  console.log(`\nNext: ${c.cyan}aeo-tracker report --html${c.reset}  ${c.dim}(or 'aeo-tracker report' for markdown-only)${c.reset}\n`);
+  console.log(`\nNext: ${c.cyan}aeo-platform report --html${c.reset}  ${c.dim}(or 'aeo-platform report' for markdown-only)${c.reset}\n`);
 
   process.exit(exitCode);
 }
@@ -2931,7 +2932,7 @@ async function cmdExport(args = {}) {
   const { readdirSync } = await import('node:fs');
   const responsesDir = 'aeo-responses';
   if (!existsSync(responsesDir)) {
-    console.error(`${c.red}No aeo-responses/ directory. Run: aeo-tracker run${c.reset}`);
+    console.error(`${c.red}No aeo-responses/ directory. Run: aeo-platform run${c.reset}`);
     process.exit(1);
   }
   const dates = readdirSync(responsesDir)
@@ -2974,7 +2975,7 @@ async function cmdExport(args = {}) {
  */
 async function cmdCrawlStats(args = {}) {
   if (!args.logFile) {
-    console.error(`${c.red}--log-file=path required. Example: aeo-tracker crawl-stats --log-file=/var/log/nginx/access.log${c.reset}`);
+    console.error(`${c.red}--log-file=path required. Example: aeo-platform crawl-stats --log-file=/var/log/nginx/access.log${c.reset}`);
     process.exit(1);
   }
   if (!existsSync(args.logFile)) {
@@ -3013,7 +3014,7 @@ async function cmdDiff(argv) {
   const responsesDir = 'aeo-responses';
 
   if (!existsSync(responsesDir)) {
-    console.error(`${c.red}No aeo-responses/ directory found. Run: aeo-tracker run${c.reset}`);
+    console.error(`${c.red}No aeo-responses/ directory found. Run: aeo-platform run${c.reset}`);
     process.exit(1);
   }
 
@@ -3021,7 +3022,7 @@ async function cmdDiff(argv) {
     .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d))
     .sort();
 
-  // Parse args: aeo-tracker diff [dateA] [dateB] | --last N | --since DATE
+  // Parse args: aeo-platform diff [dateA] [dateB] | --last N | --since DATE
   const args = {};
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--last' && argv[i + 1]) { args.last = Number(argv[i + 1]); i++; }
@@ -3070,7 +3071,7 @@ async function cmdDiff(argv) {
 
   const result = diff(summaryA, summaryB);
 
-  console.log(`\n${c.bold}@webappski/aeo-tracker — diff${c.reset}`);
+  console.log(`\n${c.bold}aeo-platform — diff${c.reset}`);
   console.log(`${c.dim}Brand: ${summaryA.brand}${c.reset}`);
   console.log(`${c.dim}From: ${dateA} — score ${summaryA.score}% (${summaryA.mentions}/${summaryA.total})${c.reset}`);
   console.log(`${c.dim}To:   ${dateB} — score ${summaryB.score}% (${summaryB.mentions}/${summaryB.total})${c.reset}`);
@@ -3127,40 +3128,40 @@ async function cmdDiff(argv) {
 // ─── CLI Entry ───
 
 const HELP = `
-${c.bold}@webappski/aeo-tracker${c.reset} — Track brand visibility in AI answer engines
+${c.bold}aeo-platform${c.reset} — Track brand visibility in AI answer engines
 
 ${c.bold}Usage:${c.reset}
-  aeo-tracker init                    Create .aeo-tracker.json config
-  aeo-tracker init --queries-only     Re-suggest queries without changing brand/domain/providers
-  aeo-tracker run          Run visibility audit (reads config, calls APIs)
-  aeo-tracker run --json   Same, but print structured JSON to stdout (for CI pipelines)
-  aeo-tracker run --replay [--replay-from=YYYY-MM-DD]
+  aeo-platform init                    Create .aeo-tracker.json config
+  aeo-platform init --queries-only     Re-suggest queries without changing brand/domain/providers
+  aeo-platform run          Run visibility audit (reads config, calls APIs)
+  aeo-platform run --json   Same, but print structured JSON to stdout (for CI pipelines)
+  aeo-platform run --replay [--replay-from=YYYY-MM-DD]
                            Replay mode — rebuild today's summary from cached raw responses
                            instead of calling APIs. Zero API cost. Useful for: iterating on
                            the report/parser locally, re-generating a summary with updated
                            extractor logic against historical data. Defaults to the most
                            recent captured snapshot unless --replay-from is given.
-  aeo-tracker run-manual P --from-dir D   Import manual paste responses for provider P
+  aeo-platform run-manual P --from-dir D   Import manual paste responses for provider P
                                           from directory D containing q1.txt, q2.txt, q3.txt
                                           (for engines without a usable API: Perplexity, Copilot,
                                           ChatGPT Pro UI, Claude.ai). Merges into today's summary.
-  aeo-tracker diff A B     Compare two runs by date (YYYY-MM-DD); shows delta table
-  aeo-tracker diff --last N       Compare the last N runs (default: 2)
-  aeo-tracker diff --since DATE   Compare a date with the latest run
-  aeo-tracker report       Generate the report. Writes report.md (markdown) AND report.html
+  aeo-platform diff A B     Compare two runs by date (YYYY-MM-DD); shows delta table
+  aeo-platform diff --last N       Compare the last N runs (default: 2)
+  aeo-platform diff --since DATE   Compare a date with the latest run
+  aeo-platform report       Generate the report. Writes report.md (markdown) AND report.html
                            (single-file bento layout — offline-ready, embedded fonts, vanilla JS)
                            and opens the HTML in your browser.
                            Output: aeo-reports/<date>/report.{md,html}
-  aeo-tracker report --output path.md   Custom output path (paired .html written alongside)
-  aeo-tracker report --no-html          Markdown only — skips HTML write and browser open.
+  aeo-platform report --output path.md   Custom output path (paired .html written alongside)
+  aeo-platform report --no-html          Markdown only — skips HTML write and browser open.
                                         Use for CI / email diffs / lightweight automation.
-  aeo-tracker report --no-open          Write report.{md,html} but don't auto-open the browser.
-  aeo-tracker report [--no-authority] [--no-entity-graph] [--no-page-signals] [--no-pricing]
+  aeo-platform report --no-open          Write report.{md,html} but don't auto-open the browser.
+  aeo-platform report [--no-authority] [--no-entity-graph] [--no-page-signals] [--no-pricing]
                            Skip optional fetch-heavy checks (Wikipedia/Reddit/GitHub authority,
                            sameAs reciprocity, own-domain HTML crawl, competitor pricing pages).
                            Use behind a corp VPN, when rate-limited, or for a fully offline report.
                            Cached results still load.
-  aeo-tracker report --refresh-cache=<fields>
+  aeo-platform report --refresh-cache=<fields>
                            Force-refresh cached fields before report runs. Use when client's site
                            changed and you want fresh signals without rerunning a full snapshot.
                            Fields (CSV): pageSignals, authorityPresence, crawlability,
@@ -3169,11 +3170,11 @@ ${c.bold}Usage:${c.reset}
                            Shortcut:     --refresh-cache=all (refresh every cached field)
                            Examples:     --refresh-cache=pageSignals,authorityPresence
                                          --refresh-cache=all
-  aeo-tracker export       Flatten all aeo-responses/*/_summary.json to CSV (default) or JSON.
-  aeo-tracker export --format=json --output=runs.json
-  aeo-tracker crawl-stats --log-file=path   Parse Apache/nginx access log → AI bot crawl frequency
-  aeo-tracker --help       Show this help
-  aeo-tracker --version    Show version
+  aeo-platform export       Flatten all aeo-responses/*/_summary.json to CSV (default) or JSON.
+  aeo-platform export --format=json --output=runs.json
+  aeo-platform crawl-stats --log-file=path   Parse Apache/nginx access log → AI bot crawl frequency
+  aeo-platform --help       Show this help
+  aeo-platform --version    Show version
 
 ${c.bold}Query validation:${c.reset}
   Queries are validated at init (static acronym + LLM industry-fit check). Verdicts are
@@ -3205,23 +3206,23 @@ ${c.bold}Environment variables:${c.reset}
     PERPLEXITY_API_KEY       Perplexity API key (Perplexity column)
   ${c.bold}Debug${c.reset}:
     AEO_DEBUG=1              Print raw stack traces alongside actionable panels
-                             (for bug reports — see github.com/webappski/aeo-tracker/issues)
+                             (for bug reports — see github.com/webappski/aeo-platform/issues)
     NO_COLOR=1               Strip ANSI escape codes from output (auto-detected
                              on non-TTY; set explicitly in CI logs if you see garbage)
 
 ${c.bold}Quick start:${c.reset}
   export OPENAI_API_KEY=sk-...        # required
   export GEMINI_API_KEY=AIza...       # required
-  aeo-tracker init --yes --brand=X --domain=x.com --auto
-  aeo-tracker run
-  aeo-tracker report
+  aeo-platform init --yes --brand=X --domain=x.com --auto
+  aeo-platform run
+  aeo-platform report
 
 ${c.bold}About:${c.reset}
   Built by Webappski (https://webappski.com), an AEO agency.
   We use this tool ourselves for our public AEO Visibility Challenge.
   Read Week 1: webappski.com/blog/aeo-visibility-challenge-week-1
 
-  Source: github.com/webappski/aeo-tracker
+  Source: github.com/webappski/aeo-platform
   License: MIT
 `;
 

@@ -2824,6 +2824,40 @@ body::before {
   --cb-bd: var(--line);
 }
 
+/* Unverified-tier variant: only one of the two extractor models flagged this
+   brand as a competitor — README promises a dashed badge for this weaker
+   signal. Overrides the solid `data-tone` border with a dashed muted border
+   and softens the foreground so the chip reads as «surfaced honestly, but
+   weaker» rather than full-strength «pitch this competitor». Applied in
+   sectionActionableGaps for cells where the competitor came from
+   results[i].competitorsUnverified rather than results[i].competitors. */
+.cell-badge[data-unverified="1"] {
+  border-style: dashed;
+  --cb-bg: var(--paper-2);
+  --cb-fg: var(--ink-4);
+  --cb-bd: var(--line-strong);
+}
+.cell-badge-mark {
+  opacity: 0.65;
+  font-weight: 500;
+}
+
+/* Radar card — unverified competitor mention-count variant. Referenced from
+   sectionCompetitorRadar.radarMentionMeta when topCompetitors[i].verified ===
+   false (competitor only met the unverified-tier bar). Same editorial logic
+   as cell-badge[data-unverified]: dashed border + muted tone so the card
+   reads as «weaker signal» rather than full-strength verified count. */
+.radar-card-meta--unverified {
+  border-bottom: 1px dashed var(--line);
+  color: var(--ink-4);
+}
+.radar-card-unverified {
+  opacity: 0.7;
+  font-family: var(--mono);
+  font-size: 10px;
+  margin-left: 2px;
+}
+
 /* Competitor-intel table: editor-blue header strip + tone-tinted cells. */
 .cintel-table-wrap {
   overflow-x: auto;
@@ -3150,6 +3184,204 @@ body::before {
   background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px;
 }
 .md-block details summary { cursor: pointer; font-weight: 600; color: var(--ink); font-size: 12.5px; }
+
+/* ─── UVI calculation popover — «(ⓘ) How is this calculated?» ───
+   Native <details> sits right under the score block. Zero JS — keyboard
+   accessible via the disclosure widget's default Enter/Space toggle.
+   Click anywhere on the <summary> row or focus + Space to expand. */
+.md-block details.uvi-breakdown {
+  margin: 6px 0 14px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--paper-2) 80%, var(--paper) 20%);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+.md-block details.uvi-breakdown[open] {
+  background: var(--paper-2);
+  border-color: var(--line);
+}
+.md-block details.uvi-breakdown summary {
+  font-weight: 500;
+  color: var(--ink-3);
+  font-size: 12px;
+  list-style: none;          /* hide default disclosure triangle */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.md-block details.uvi-breakdown summary::-webkit-details-marker { display: none; }
+.md-block details.uvi-breakdown[open] summary { color: var(--ink-2); margin-bottom: 8px; }
+.md-block details.uvi-breakdown summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.md-block .uvi-info-icon {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--editor-ink);
+  font-style: normal;
+}
+.md-block .uvi-info-label { letter-spacing: 0.01em; }
+.md-block .uvi-breakdown-body { padding-top: 4px; }
+.md-block .uvi-renorm {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border-left: 3px solid var(--warn);
+  border-radius: 0 4px 4px 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.md-block table.uvi-breakdown-table {
+  width: 100%; border-collapse: collapse; margin: 6px 0;
+  font-family: var(--sans); font-size: 12px;
+}
+.md-block table.uvi-breakdown-table th {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+}
+.md-block .uvi-num { text-align: right; font-variant-numeric: tabular-nums; }
+.md-block .uvi-meaning {
+  font-size: 11px; color: var(--ink-4); font-weight: 400;
+  margin-top: 2px;
+}
+.md-block .uvi-sub {
+  font-size: 10.5px; color: var(--ink-4); font-weight: 400;
+  margin-top: 2px;
+}
+.md-block .uvi-sum {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.md-block .uvi-formula-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+/* ─── Hero variant of the UVI popover — same DOM, no .md-block parent. ───
+   The popover sits directly under the «60 / 100» display, anchored to the
+   hero. Closed state is a thin pill so it never breaks the bento layout;
+   the disclosure expands inline below the number block. CSS replicates the
+   .md-block scoped rules without the prefix so the popover is functional in
+   both contexts (markdown section AND hero) from a single template. */
+details.uvi-breakdown--hero {
+  margin: 14px 0 0;
+  max-width: 640px;
+  position: relative;
+  z-index: 3;
+  /* When closed: behave as inline badge, no card chrome */
+  border: 0;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+details.uvi-breakdown--hero[open] {
+  background: var(--paper-2);
+  border: 1px solid var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  padding: 10px 14px 12px;
+  border-radius: 8px;
+}
+details.uvi-breakdown--hero summary {
+  cursor: pointer;
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Badge styling — matches accent-pill convention used elsewhere */
+  padding: 5px 10px 5px 8px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 999px;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+details.uvi-breakdown--hero summary:hover {
+  background: color-mix(in srgb, var(--accent-soft) 70%, var(--accent-tint) 30%);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+details.uvi-breakdown--hero summary::-webkit-details-marker { display: none; }
+details.uvi-breakdown--hero[open] summary {
+  margin-bottom: 8px;
+  background: var(--accent);
+  color: #FFFFFF;
+  border-color: var(--accent);
+}
+details.uvi-breakdown--hero[open] summary .uvi-info-icon { color: #FFFFFF; }
+details.uvi-breakdown--hero summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+details.uvi-breakdown--hero .uvi-info-icon {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--accent);
+  font-style: normal;
+}
+details.uvi-breakdown--hero .uvi-info-label { letter-spacing: 0.01em; }
+details.uvi-breakdown--hero .uvi-breakdown-body { padding-top: 4px; }
+details.uvi-breakdown--hero .uvi-renorm {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border-left: 3px solid var(--warn);
+  border-radius: 0 4px 4px 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+details.uvi-breakdown--hero table.uvi-breakdown-table {
+  width: 100%; border-collapse: collapse; margin: 6px 0;
+  font-family: var(--sans); font-size: 12px;
+  color: var(--ink-2);
+}
+details.uvi-breakdown--hero table.uvi-breakdown-table th {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  text-align: left;
+  border-bottom: 1px solid var(--line-soft);
+  padding: 4px 6px;
+  color: var(--ink-3);
+  font-weight: 600;
+}
+details.uvi-breakdown--hero table.uvi-breakdown-table td {
+  padding: 6px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
+}
+details.uvi-breakdown--hero .uvi-num { text-align: right; font-variant-numeric: tabular-nums; }
+details.uvi-breakdown--hero .uvi-meaning {
+  font-size: 11px; color: var(--ink-4); font-weight: 400;
+  margin-top: 2px;
+}
+details.uvi-breakdown--hero .uvi-sub {
+  font-size: 10.5px; color: var(--ink-4); font-weight: 400;
+  margin-top: 2px;
+}
+details.uvi-breakdown--hero .uvi-sum {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--ink);
+}
+details.uvi-breakdown--hero .uvi-formula-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--ink-4);
+}
 
 /* ─── Colophon — editorial signature + technical meta ────── */
 .colophon {

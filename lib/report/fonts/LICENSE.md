@@ -1,6 +1,6 @@
 # Bundled fonts — provenance & licensing
 
-Three variable woff2 files bundled with `@webappski/aeo-tracker` for the HTML
+Three variable woff2 files bundled with `aeo-platform` for the HTML
 report renderer. All three are licensed under the **SIL Open Font License 1.1**
 (OFL), which permits embedding, redistribution, and modification.
 
@@ -27,7 +27,7 @@ file. Verify the file is still <100KB and still a `Web Open Font Format
 **Why bundled instead of CDN?** Two reasons:
 1. The HTML report is meant to work **offline** — emailable, archivable,
    PDF-printable from disconnected machines.
-2. `aeo-tracker` is zero-runtime-dependency. Embedding the fonts at build
+2. `aeo-platform` is zero-runtime-dependency. Embedding the fonts at build
    time keeps that promise (no `fetch()` at report render time).
 
 If the bundled fonts cause problems for your distribution (license review,

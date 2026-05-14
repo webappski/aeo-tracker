@@ -1,6 +1,78 @@
 # Changelog
 
-All notable changes to `@webappski/aeo-tracker`.
+All notable changes to `aeo-platform` (formerly `@webappski/aeo-tracker`).
+
+## [1.0.0] — 2026-05-13
+
+**Renamed: `@webappski/aeo-tracker` → `aeo-platform`.** The «tracker» name described only the measurement layer; the tool now spans measure → audit → diagnose → recommend → plan-generate → track. The new package name reflects the full scope.
+
+### Breaking changes
+
+1. **npm package name changed** from `@webappski/aeo-tracker` to `aeo-platform` (bare, unscoped). Existing `npm install @webappski/aeo-tracker` will continue to install the old package but will receive NO new versions on that name. Migrate with:
+
+   ```bash
+   npm uninstall -g @webappski/aeo-tracker
+   npm install -g aeo-platform
+   ```
+
+   Project-dependency users with `^0.3.0` caret in `package.json` will stay on the old buggy 0.3.x branch — manually edit `package.json` to `"aeo-platform": "^1.0.0"`.
+
+2. **CLI command `aeo-tracker` preserved as a built-in alias.** Both `aeo-platform run/init/report` and `aeo-tracker run/init/report` work. Existing scripts and muscle memory unaffected. New documentation prefers `aeo-platform`.
+
+3. **`engines.node` bumped** from `>=18.0.0` to `>=20.0.0` (Node 18 reached EOL April 2025; `pnpm` with `engine-strict=true` refuses install on EOL Node).
+
+4. **Old package `@webappski/aeo-tracker` will be deprecated** on npm 2-4 weeks after `aeo-platform@1.0.0` reaches stability. A patch release on the old name (`0.2.8`) will replace `latest` dist-tag with a stable 0.2.7-based codebase + redirect banner README, so default installs of the old name get a working tool with migration guidance.
+
+### What stays the same
+
+- All CLI command names and flags (via the `aeo-tracker` bin alias)
+- All configuration files (`.aeo-tracker.json`)
+- All API surfaces (`_summary.json` schema, raw response paths)
+- Raw response folder structure (`aeo-responses/YYYY-MM-DD/`)
+- Report output folder structure (`aeo-reports/YYYY-MM-DD/`)
+
+**What changed:**
+
+- Package name: `@webappski/aeo-tracker` → `aeo-platform` (bare, no scope)
+- New canonical CLI command: `aeo-platform` (alongside backward-compatible `aeo-tracker`)
+- `engines.node`: `>=18.0.0` → `>=20.0.0` (Node 18 reached EOL in April 2025; `pnpm` with `engine-strict=true` refuses install on EOL Node)
+- README rewritten: hero positions the tool as an AEO/GEO **platform** (audit + diagnose + recommend + plan), not just a tracker
+- Maintainer byline updated: Webappski (Organization) + Alex Isa (lead maintainer) — replaces prior personal byline
+- Competitor pricing claims removed from README and docs (we describe pricing **model**, not specific amounts — those shift and are not ours to publish)
+- Render fixes from the 0.3.x feature release bundled in (see «Bundled fixes» below)
+
+**Migration path for existing users:**
+
+- `npm i -g aeo-platform` — install the new package
+- Old `@webappski/aeo-tracker@<1.0.0`: `npm deprecate` flag (eventually) will display a redirect notice on install
+- Same-day stable patch on the old name (`@webappski/aeo-tracker@0.2.8`) repoints `latest` dist-tag from buggy `0.3.x` back to the proven `0.2.7` codebase, with a redirect README. Pinned consumers of `0.3.x` are unaffected
+- Project-dep users with caret `^0.3.0` stay on the buggy `0.3.x` branch — manually edit `package.json` to `"aeo-platform": "^1.0.0"`
+
+**Bundled fixes (from agent-pass audit work):**
+
+- UVI breakdown popover (`<details>` with `ⓘ` icon) — exposes per-axis math (presence/sentiment/rank/citation, applied weights, contribution, re-norm banner when components null)
+- Rank-component honest handling: when no cell has position data, rank is excluded and weights re-normalised; no more hardcoded `50/100` phantom value
+- Sentiment composite excludes low-confidence «neutral» tie-breaks; displays effective sample size `n=K high-confidence cells`
+- Two-model competitor extractor: category-grounded prompt; retailers-mentioned-as-customers (Amazon/Walmart/Starbucks) no longer flagged as competitors; cross-check splits unverified into a separate bucket with dashed badge
+- «Actionable Gaps» section respects the dashed badge for unverified competitors and uses a softened «Cross-check this cell» action
+- Outreach denylist hardened: bare-apex entries for developer-hosting domains (`github.io`, `gitlab.io`, `netlify.app`, `vercel.app`, `glitch.me`, `pages.dev`, `web.app`, `firebaseapp.com`); trailing-dot + `www.` normalisation
+- Own-domain filter strips `:port`, `?query`, `#fragment` suffixes; LLM action prompts filter own-domain before assembly (no more self-pitch)
+- Hero «Citations earned» KPI renamed to «Lift opportunities» with honest framing (the metric measures «cited but not named» — a lift opportunity count, not total citations)
+- «Discoverability Score» renamed to «AI-Bot Crawl Readiness» with a caveat that it measures technical access, not actual visibility in AI answers
+- «UTM-Tagged Citations» renamed to «Engine-Auto-Tagged Citations» with honest framing (the UTMs are auto-appended by AI engines, not user-configured)
+- Trend chart suppressed below 4 runs (statistical noise floor); topic clusters suppressed below 3 (no meaningful clustering at N=1)
+- competitorPricing section suppressed when ≥80% of rows are `tier: unknown`
+- regionContext block suppressed when `--geo` was not used
+- «How your score compares» anchoring baselines removed (no sourced methodology behind the bands)
+- Engine-specific actions cards now pull from actual run citations (per engine), with generic playbook only as fallback when an engine has zero citations
+- Industry-mismatch panel fires only when ≥30% off-share AND ≥70% of off-category verdicts are `confidence: high` (no more false-positive panel on classifier failures)
+- mc-metadata `scores` and `perEngine` delegate to `computeUVI` byte-for-byte (the paste-into-AI JSON brand-context block now matches the markdown UVI exactly)
+- Radar polygon Mentions axis uses verified count (`topCompetitors[i].count`); no more discrepancy between bar chart and radar
+- Cross-run delta: provider absent in previous run reports «new this run» instead of a fabricated −67pp regression; method-change between runs tagged `mixedMethod`
+
+**Tests:** +95 new test assertions across 8 new files; 30+ test suites pass.
+
+**Why now:** at 101 weekly downloads we are well below the 1500-DL break-even where rename cost compounds; renaming after that point loses real signal. Two independent senior npm-migration audits confirmed the timing.
 
 ## [0.3.2] — 2026-05-13
 
@@ -133,7 +205,7 @@ The core narrative: catch up to hosted competitors (Otterly, Profound, Peec.ai, 
 
 ### Added — new CLI flags & commands
 
-- **`aeo-tracker run --geo=us,uk,de,...`** — runs every query under multiple regional contexts. 12 regions: `us, uk, de, fr, es, it, ca, au, in, br, jp, nl`. Cost multiplies linearly with region count; warned explicitly before spending. Region tag on each result + region suffix in raw response filenames. Manual-paste path normalises queries but does not loop regions. Differentiation: Wellows/OneGlanse/AthenaHQ are single-region; Otterly supports 7+ at $29+/mo. We're free.
+- **`aeo-tracker run --geo=us,uk,de,...`** — runs every query under multiple regional contexts. 12 regions: `us, uk, de, fr, es, it, ca, au, in, br, jp, nl`. Cost multiplies linearly with region count; warned explicitly before spending. Region tag on each result + region suffix in raw response filenames. Manual-paste path normalises queries but does not loop regions. Differentiation: most paid competitors are single-region or charge for regional coverage; we're free.
 - **`aeo-tracker run --depth=<web|full|auto>`** — selects how many LLM passes per cell.
   - `web` (default) — single web-search pass. Identical to v0.2.7 behaviour.
   - `full` — adds a second training-data pass (no web search) where supported (OpenAI / Gemini / Anthropic). Perplexity is search-only by design and is auto-skipped. Cost ~2× web-only. Distinguishes "absent from current SERPs" from "absent from training corpus".
@@ -182,7 +254,7 @@ Pixel-aligned to the v2 editorial-bento prototype (`handoff 3/templates/`). No s
 - **`extractWithTwoModels` + `classifySentimentWithTwoModels` run in parallel** via `Promise.all` per cell (previously sequential). Halves the per-cell wall-clock for runs with mentions.
 - **`persistSnapshot()` helper** centralises atomic `_summary.json` writes (tmp + rename) — replaces 5 inline duplicated blocks across cache writers (citation classification, LLM actions, authority, crawlability, outreach). Random suffix is now `pid+Date.now()+randomBytes(4)` to avoid collisions on double-press.
 - **Region loop in `cmdRun`** properly indented; skipKey format unified to 5-component `query:region:provider:model:mode` in both load and lookup paths.
-- **Repository URL** updated from `github.com/DVdmitry/aeo-tracker` to `github.com/webappski/aeo-tracker` across README, error panels, help text.
+- **Repository URL** consolidated under the `webappski` GitHub organization across README, error panels, help text.
 - **Authority block CLI log line** changed from «Checking Wikipedia + Reddit for X…» to «Checking authority signals for X…» (now includes GitHub when dev-tool profile fires).
 - **Authority section header copy:** «Wikipedia and Reddit are two off-page signals…» → «Off-page signals AI engines weight heavily…» (segment-neutral, since dev-tool brands now also surface GitHub).
 - **`bin/aeo-tracker.js` execution order:** page-signals crawl now runs **before** the authority block (was after) — authority profile detection reads pageSignals H1/H2 as a category proxy.

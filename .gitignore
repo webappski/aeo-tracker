@@ -18,3 +18,7 @@ docs/aeo-recommendations/
 
 # Tarball from `npm pack`
 *.tgz
+
+# Internal migration docs (not for public commit)
+MIGRATION_PLAN.md
+IDENTITY_CLEANUP_PLAN.md

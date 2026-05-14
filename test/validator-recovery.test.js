@@ -156,7 +156,7 @@ test('formatRecoveryPanel: shows pre-filled --keywords from pool', () => {
   assert.match(text, /Cannot auto-recover/);
   assert.match(text, /--keywords=/);
   assert.match(text, /voice form filling vs web chat forms/); // from pool
-  assert.match(text, /aeo-tracker init --yes/);
+  assert.match(text, /aeo-platform init --yes/);
 });
 
 test('formatRecoveryPanel: empty pool uses editable templates', () => {

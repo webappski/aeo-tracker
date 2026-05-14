@@ -18,9 +18,9 @@ I built `aeo-tracker` — a CLI that calls ChatGPT, Gemini, Claude, and Perplexi
 
 ### The problem
 
-If you're a B2B founder, indie hacker, or small agency, here's a question worth $200-$500/month: **does ChatGPT name you when someone asks for tools in your category?**
+If you're a B2B founder, indie hacker, or small agency, here's a question that's worth the price of a hosted-dashboard subscription: **does ChatGPT name you when someone asks for tools in your category?**
 
-The answer is almost always "no, and you didn't know." There's a category of tools (Profound, Peec.ai, Otterly, AthenaHQ, Wellows) that solve this with hosted dashboards starting at $99/mo. They're great for teams. They're overkill for an indie running 3 queries weekly against 4 engines.
+The answer is almost always "no, and you didn't know." There's a category of tools (Profound, Peec.ai, Otterly, AthenaHQ, Wellows) that solve this with paid hosted dashboards. They're great for teams. They're overkill for an indie running 3 queries weekly against 4 engines.
 
 The actual job is small:
 
@@ -103,7 +103,7 @@ aeo-tracker run
 aeo-tracker report --html
 ```
 
-You need an OpenAI API key + a Gemini API key minimum (Anthropic and Perplexity optional). A first run costs $0.50-$1.00 depending on how rich the answers are.
+You need an OpenAI API key + a Gemini API key minimum (Anthropic and Perplexity optional). A first run costs about a dollar depending on how rich the answers are.
 
 Source: github.com/webappski/aeo-tracker
 Issue or feature you want? Open an issue.

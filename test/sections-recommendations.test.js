@@ -8,6 +8,9 @@
 // fixtures inline so behaviour is local to the assertion.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import {
   sectionCanonicalSources,
   sectionNextSteps,
@@ -15,6 +18,8 @@ import {
   sectionDisambiguationWarning,
 } from '../lib/report/sections.js';
 import { normaliseOwnDomain, isOwnDomain } from '../lib/report/own-domain.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let passed = 0;
 let failed = 0;
@@ -264,6 +269,112 @@ await test('threshold edge: single off-category + 5 on-category → suppressed (
     ],
   )]);
   assert.equal(md, '', 'isolated off-category entry in an otherwise correct pool is suppressed');
+});
+
+// ─── BUG: Actionable Gaps must downgrade unverified-tier competitors ───
+//
+// Reproduces the May-2026 typelessform.com Q2/Gemini cell — gpt-5.4-mini
+// flagged retailers-as-customers (Amazon/Walmart/Starbucks) as competitors,
+// gemini-2.5-flash returned empty, so the two-model extractor parked them in
+// `competitorsUnverified`. The Actionable Gaps renderer was treating the
+// unverified-tier as if it were verified — producing a bold-red
+// «Pitch vellis.financial to add typelessform alongside Amazon» action that
+// the README explicitly promises will not happen.
+//
+// Fixture: test/fixtures/q2-gemini-unverified-retailers.json (real run trim).
+
+console.log('\nBUG — Actionable Gaps respects verified vs unverified competitor tiers');
+
+const Q2_GEMINI_CELL = JSON.parse(
+  readFileSync(join(__dirname, 'fixtures', 'q2-gemini-unverified-retailers.json'), 'utf-8')
+);
+delete Q2_GEMINI_CELL._README;
+
+function snapshotWithCell(cell, extraResults = []) {
+  return {
+    brand: 'TypelessForm',
+    domain: 'typelessform.com',
+    date: '2026-05-13',
+    total: 1 + extraResults.length,
+    topDomains: [],
+    topCanonicalSources: [],
+    results: [cell, ...extraResults],
+  };
+}
+
+await test('Q2/Gemini fixture (Amazon/Walmart/Starbucks unverified-only) → no bold-red «Pitch» action', () => {
+  const md = sectionActionableGaps([snapshotWithCell(Q2_GEMINI_CELL)]);
+  assert.ok(md.length > 0, 'section should render — unverified-only cell still surfaces, just softened');
+  // Strong pitch wording with «alongside Amazon/Walmart/Starbucks» was the bug.
+  assert.ok(!/Pitch \*\*[^*]+\*\* to add .* alongside (Amazon|Walmart|Starbucks)/.test(md),
+    'must NOT promote unverified retailers to a «Pitch X alongside Amazon» action');
+  // Softened diagnostic wording is the contract — README promises «dashed
+  // badges = weaker signal, surfaced honestly».
+  assert.ok(/Cross-check this cell|only one extractor model flagged/i.test(md),
+    'must use the softened «Cross-check this cell» wording for unverified-only rows');
+});
+
+await test('unverified-tier badges carry the dashed-variant attribute', () => {
+  const md = sectionActionableGaps([snapshotWithCell(Q2_GEMINI_CELL)]);
+  // Reuse the existing cell-badge shape with a `data-unverified="1"` attr —
+  // styles.css applies the dashed border via the [data-unverified] selector.
+  assert.ok(/data-unverified="1"/.test(md),
+    'unverified competitor chips must carry the dashed-variant data attribute');
+  assert.ok(md.includes('Amazon') && md.includes('Walmart') && md.includes('Starbucks'),
+    'unverified brand names are still visible in the table (so the reader sees what was flagged)');
+});
+
+await test('cell with zero verified AND zero unverified is excluded entirely', () => {
+  // No displacement signal at all — keeping the row would add noise.
+  const emptyCell = {
+    query: 'Q3', provider: 'openai',
+    queryText: 'where to find best coffee in toronto',
+    mention: 'no', competitors: [], competitorsUnverified: [],
+    canonicalCitations: [],
+  };
+  const md = sectionActionableGaps([snapshotWithCell(emptyCell)]);
+  assert.equal(md, '', 'no verified + no unverified competitors → section does not render this cell');
+});
+
+await test('mixed verified + unverified row gets the strong action, not the softened one', () => {
+  // Verified takes priority: when at least one model-agreed competitor exists,
+  // the action is the standard «Pitch X alongside Y» — unverified names still
+  // appear as dashed chips in the «Cited instead» column, but they do not
+  // trigger the diagnostic copy.
+  const mixedCell = {
+    query: 'Q4', provider: 'openai',
+    queryText: 'voice autofill checkout',
+    mention: 'no',
+    competitors: ['AnveVoice'],
+    competitorsUnverified: ['NoisyRetailer'],
+    canonicalCitations: ['https://g2.com/voice-form'],
+  };
+  const md = sectionActionableGaps([snapshotWithCell(mixedCell)]);
+  assert.ok(/Pitch \*\*g2\.com\*\* to add TypelessForm alongside AnveVoice/.test(md),
+    'mixed row uses the standard pitch action targeting the VERIFIED competitor');
+  assert.ok(!/Cross-check this cell/.test(md),
+    'mixed row does not use softened wording — verified bucket is non-empty');
+  // The unverified chip is still rendered with the dashed variant so the reader
+  // sees what the cross-check disagreed on.
+  assert.ok(/NoisyRetailer/.test(md) && /data-unverified="1"/.test(md),
+    'unverified chip still appears with the dashed-variant attribute');
+});
+
+await test('verified-only cell uses the standard solid-red badge (no dashed attr)', () => {
+  const verifiedCell = {
+    query: 'Q5', provider: 'gemini',
+    queryText: 'voice autofill',
+    mention: 'no',
+    competitors: ['AnveVoice', 'SayFill'],
+    competitorsUnverified: [],
+    canonicalCitations: ['https://g2.com/x'],
+  };
+  const md = sectionActionableGaps([snapshotWithCell(verifiedCell)]);
+  // AnveVoice's chip must be the solid-tone variant, not dashed.
+  const anveChip = md.match(/<span class="cell-badge"[^>]*>AnveVoice<\/span>/);
+  assert.ok(anveChip, 'verified competitor must render as solid cell-badge');
+  assert.ok(!/AnveVoice[^<]*<\/span>.*data-unverified/.test(md),
+    'verified-only cell must NOT carry the data-unverified attribute');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

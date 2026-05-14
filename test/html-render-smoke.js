@@ -181,5 +181,82 @@ test('top competitor in hero filters out accent (YOU) row', () => {
   assert.ok(/Competitor A/.test(heroBlock), 'hero should name a real competitor');
 });
 
+// ─── Bug fix v0.6: UVI «How is this calculated?» popover lives in the hero ──
+test('hero renders ⓘ How is this calculated popover anchored to the UVI number', () => {
+  const html = renderHtml(baseSummary, [baseSnapshot]);
+  const heroBlock = html.split('class="hero"')[1].split('class="promote"')[0];
+  // The hero variant uses the shorter «How is this calculated?» label
+  // (no parenthetical «click to expand») so it fits the dense header.
+  assert.ok(/uvi-breakdown--hero/.test(heroBlock), 'hero variant of UVI popover not anchored to hero');
+  assert.ok(/How is this calculated\?/.test(heroBlock), 'hero popover summary text missing');
+  // The ⓘ icon is U+24D8, encoded as &#9432; in the markup
+  assert.ok(/&#9432;/.test(heroBlock), 'hero popover ⓘ icon missing');
+  // Same breakdown table content as the md-section copy — single source of truth.
+  assert.ok(/uvi-breakdown-table/.test(heroBlock), 'hero popover breakdown table missing');
+});
+
+test('full report contains «How is this calculated?» twice — hero + markdown section', () => {
+  const html = renderHtml(baseSummary, [baseSnapshot]);
+  const matches = html.match(/How is this calculated\?/g) || [];
+  // ≥ 2 = hero popover + markdown popover land in the rendered HTML.
+  // Hard-audit checklist: not a double-render of the same anchor.
+  assert.ok(matches.length >= 2, `expected ≥ 2 popovers, got ${matches.length}`);
+});
+
+test('hero subtitle does NOT contain the BANNED phrase «cited X times»', () => {
+  const html = renderHtml(baseSummary, [baseSnapshot]);
+  const heroBlock = html.split('class="hero"')[1].split('class="promote"')[0];
+  // The literal pattern «cited N times» (number-of-citations bare assertion)
+  // is banned — it conflates totalCitations (URL hits) with coverage.src
+  // (cited-but-not-named cells). Both old hero copies («cited 0 times» and
+  // «cited 5 times») must be gone.
+  assert.ok(!/cited <b>\d+ times<\/b>/.test(heroBlock), 'banned phrase «cited N times» found in hero');
+  assert.ok(!/cited \d+ times/.test(heroBlock), 'banned bare phrase «cited N times» found in hero');
+});
+
+test('hero subtitle uses the new lift-opportunity wording when coverage.src === 0', () => {
+  const html = renderHtml(baseSummary, [baseSnapshot]);
+  const heroBlock = html.split('class="hero"')[1].split('class="promote"')[0];
+  // baseSummary has coverage.yes=1, src=0, total=2 → trailing-but-named branch.
+  // The new copy ends with the success-state «citation without naming» line.
+  assert.ok(/citation without naming/.test(heroBlock),
+    'hero copy does not mention «citation without naming» success-state for src=0');
+});
+
+test('hero subtitle uses the new lift-opportunity wording when coverage.src > 0', () => {
+  const summary = {
+    ...baseSummary,
+    coverage: { yes: 2, src: 3, no: 1, error: 0, total: 6 },
+  };
+  const html = renderHtml(summary, [baseSnapshot]);
+  const heroBlock = html.split('class="hero"')[1].split('class="promote"')[0];
+  // When src > 0 the copy explicitly calls out the lift opportunity.
+  assert.ok(/lift opportunity/i.test(heroBlock),
+    'hero copy does not mention «lift opportunity» when coverage.src > 0');
+});
+
+test('KPI card renamed from «Citations earned» to «Lift opportunities»', () => {
+  const html = renderHtml(baseSummary, [baseSnapshot]);
+  const heroBlock = html.split('class="hero"')[1].split('class="promote"')[0];
+  // The old label is misleading because the underlying counter mixed
+  // domain-URL-hits across all cells, so we ban it from the hero KPI strip.
+  assert.ok(!/Citations earned/.test(heroBlock),
+    'old «Citations earned» label still in hero KPI strip');
+  assert.ok(/Lift opportunities/.test(heroBlock),
+    'new «Lift opportunities» label missing from hero KPI strip');
+});
+
+test('KPI card subtitle does NOT recommend the wrong robots.txt fix when coverage.src === 0', () => {
+  const html = renderHtml(baseSummary, [baseSnapshot]);
+  const heroBlock = html.split('class="hero"')[1].split('class="promote"')[0];
+  // Old subtitle said «No citations yet — make sure your domain is in
+  // robots.txt allowlist» when coverage.src === 0. That advice is wrong
+  // when every cited cell ALSO named the brand (a success state).
+  assert.ok(!/robots\.txt allowlist/.test(heroBlock),
+    'wrong robots.txt advice still appears in hero KPI card');
+  assert.ok(/success state/.test(heroBlock),
+    'success-state wording missing from KPI card when coverage.src === 0');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

@@ -1,0 +1,27 @@
+{
+  "_README": "Trimmed cell extracted from the May-2026 typelessform.com dogfood run (aeo-responses/2026-05-13/_summary.json). Q2 = 'voice form filling solution for e-commerce checkout', engine = Gemini. gpt-5.4-mini wrongly classified retailers-mentioned-as-customers (Amazon, Walmart, Starbucks) as competitors; gemini-2.5-flash correctly returned empty. Cross-check splits them into competitorsUnverified as designed. Renderer must NOT promote this cell to a bold-red 'Pitch <site> to add typelessform alongside Amazon' action in Actionable Gaps. See the BUG: Render-tier downgrade for unverified competitors fix.",
+  "query": "Q2",
+  "queryText": "voice form filling solution for e-commerce checkout",
+  "provider": "gemini",
+  "label": "Gemini",
+  "model": "gemini-2.5-pro",
+  "mode": "web",
+  "mention": "no",
+  "position": null,
+  "citationCount": 12,
+  "canonicalCitations": [
+    "https://vellis.financial",
+    "https://bazaarvoice.com",
+    "https://twilio.com"
+  ],
+  "competitors": [],
+  "competitorsUnverified": [
+    "Amazon",
+    "Walmart",
+    "Starbucks"
+  ],
+  "extractionSources": {
+    "primary":   { "model": "gpt-5.4-mini",     "brands": ["Amazon", "Walmart", "Starbucks"] },
+    "secondary": { "model": "gemini-2.5-flash", "brands": [] }
+  }
+}
