@@ -22,3 +22,4 @@ docs/aeo-recommendations/
 # Internal migration docs (not for public commit)
 MIGRATION_PLAN.md
 IDENTITY_CLEANUP_PLAN.md
+IDENTITY_TASK_LIST.md
