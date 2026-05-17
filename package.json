@@ -10,7 +10,7 @@
   "scripts": {
     "test:syntax": "node --check bin/aeo-tracker.js",
     "test:imports": "node -e \"Promise.all(['./lib/config.js','./lib/mention.js','./lib/diff.js','./lib/init/keys.js','./lib/init/fetch-site.js','./lib/init/suggest.js','./lib/init/research/brainstorm.js','./lib/init/research/filter.js','./lib/init/research/classify-intent.js','./lib/init/research/score.js','./lib/init/research/validate-category.js','./lib/init/research/validate-query-llm.js','./lib/init/research/run-validation.js','./lib/init/research/research.js','./lib/init/research-failure-panel.js','./lib/init/validator-recovery.js','./lib/util/spinner.js','./lib/providers/openai.js','./lib/providers/gemini.js','./lib/providers/anthropic.js','./lib/providers/perplexity.js','./lib/providers/index.js','./lib/providers/classify-error.js','./lib/errors/all-engines-failed-panel.js','./lib/errors/unexpected-error-panel.js','./lib/svg/index.js','./lib/svg/radar.js','./lib/report/sections.js','./lib/report/extract-quotes.js','./lib/report/markdown.js','./lib/report/html.js','./lib/report/classify-citations.js','./lib/report/extract-competitors-llm.js','./lib/report/sentiment-classify.js','./lib/report/outreach-templates.js','./lib/report/crawlability-audit.js','./lib/report/domain-category.js','./lib/report/geo-context.js','./lib/report/markdown-to-html.js','./lib/report/visibility-index.js','./lib/report/topic-cluster.js','./lib/report/csv-export.js','./lib/report/log-parser.js','./lib/report/authority-presence.js','./lib/report/ads-detector.js','./lib/report/utm-tracker.js','./lib/config/queries-normalize.js','./lib/report/top-domains.js','./lib/providers/non-search-model.js','./lib/report/response-quality.js','./lib/report/own-domain.js'].map(f => import(f))).then(() => console.log('OK: all modules loaded')).catch(e => { console.error(e); process.exit(1); })\"",
-    "test:cli": "node bin/aeo-tracker.js --version && node bin/aeo-tracker.js --help > /dev/null && echo OK: CLI works",
+    "test:cli": "node test/cli-smoke.test.js",
     "test:validator": "node test/validate-queries.test.js",
     "test:extract": "node test/extract-competitors-llm.test.js",
     "test:sentiment": "node test/sentiment-classify.test.js",
@@ -49,7 +49,16 @@
     "test:mc-metadata": "node test/mc-metadata-scores.test.js",
     "test:own-domain": "node test/own-domain.test.js",
     "test:pack-files": "node test/pack-files.test.js",
-    "test": "npm run test:syntax && npm run test:imports && npm run test:cli && npm run test:validator && npm run test:extract && npm run test:sentiment && npm run test:outreach && npm run test:crawlability && npm run test:category && npm run test:queries && npm run test:geo && npm run test:mdhtml && npm run test:htmlrender && npm run test:uvi && npm run test:topics && npm run test:csv && npm run test:logs && npm run test:ads && npm run test:utm && npm run test:authority && npm run test:authority-profiles && npm run test:authority-github && npm run test:authority-legacy && npm run test:topdomains && npm run test:depth && npm run test:quality && npm run test:pipeline && npm run test:position && npm run test:keys && npm run test:resilience && npm run test:recovery && npm run test:spinner && npm run test:design-lint && npm run test:sections-recs && npm run test:empty-blocks && npm run test:sections-copy && npm run test:diff && npm run test:sections-integrity && npm run test:mc-metadata && npm run test:own-domain",
+    "test:tpm-ledger": "node test/tpm-ledger.test.js",
+    "test:rate-limits": "node test/rate-limits.test.js",
+    "test:scheduler": "node test/scheduler.test.js",
+    "test:live-rows": "node test/live-rows.test.js",
+    "test:discover": "node test/discover.test.js",
+    "test:openai": "node test/openai.test.js",
+    "test:anthropic": "node test/anthropic.test.js",
+    "test:main-options": "node test/main-options.test.js",
+    "test:fetch-timeout": "node test/fetch-with-timeout.test.js",
+    "test": "npm run test:syntax && npm run test:imports && npm run test:cli && npm run test:validator && npm run test:extract && npm run test:sentiment && npm run test:outreach && npm run test:crawlability && npm run test:category && npm run test:queries && npm run test:geo && npm run test:mdhtml && npm run test:htmlrender && npm run test:uvi && npm run test:topics && npm run test:csv && npm run test:logs && npm run test:ads && npm run test:utm && npm run test:authority && npm run test:authority-profiles && npm run test:authority-github && npm run test:authority-legacy && npm run test:topdomains && npm run test:depth && npm run test:quality && npm run test:pipeline && npm run test:position && npm run test:keys && npm run test:resilience && npm run test:recovery && npm run test:spinner && npm run test:design-lint && npm run test:sections-recs && npm run test:empty-blocks && npm run test:sections-copy && npm run test:diff && npm run test:sections-integrity && npm run test:mc-metadata && npm run test:own-domain && npm run test:tpm-ledger && npm run test:rate-limits && npm run test:scheduler && npm run test:live-rows && npm run test:discover && npm run test:openai && npm run test:anthropic && npm run test:main-options && npm run test:fetch-timeout",
     "prepublishOnly": "npm test && npm run test:pack-files"
   },
   "files": [

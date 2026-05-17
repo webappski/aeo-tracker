@@ -471,6 +471,8 @@ Known Windows-specific gotchas to watch for:
 - **`crawl-stats` parses Apache/nginx logs only** — IIS W3C Extended Log Format is not supported in 1.0.x (on the roadmap). Workaround: convert with [Log Parser 2.2](https://www.microsoft.com/en-us/download/details.aspx?id=24659) to NCSA Combined first.
 - **Brand names with non-ASCII characters** render correctly in PowerShell 7+ and Windows Terminal; legacy `cmd.exe` may show `?` for Cyrillic / CJK in console output (file output to `_summary.json` is always UTF-8 and unaffected). For Cyrillic console output in CMD: `chcp 65001` switches the codepage to UTF-8.
 - **Manual paste mode + Notepad:** save `.txt` files as **UTF-8 without BOM** (Notepad's «UTF-8 with BOM» default leaves an invisible byte at file start that affects mention detection). VSCode and Notepad++ default to UTF-8 without BOM.
+- **Long paths (`MAX_PATH` 260 chars).** If your repo lives deep under `C:\Users\<long-username>\...` and you hit `ENAMETOOLONG` mid-run, enable Windows Long Paths once: `Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1` (admin PowerShell, then reboot). Alternative: move the working directory closer to a drive root (e.g. `C:\aeo\<brand>`).
+- **Behind a corporate proxy.** Node's built-in `fetch` does not read Windows system proxy settings. Set the env vars explicitly before running: `$env:HTTPS_PROXY = "http://proxy.corp:8080"` and `$env:HTTP_PROXY = "http://proxy.corp:8080"` (PowerShell), or `set HTTPS_PROXY=http://proxy.corp:8080` (CMD). Add `NO_PROXY=localhost,127.0.0.1` to bypass for local addresses.
 - **Windows Defender** occasionally flags Node-based CLI tools. If `aeo-platform run` is blocked, add `%APPDATA%\npm` to Defender exclusions.
 - **Task Scheduler `/ST` is local time, not UTC** (unlike GitHub Actions cron). Pick your timezone deliberately.
 
@@ -673,7 +675,7 @@ Methodology lives in the weekly reports at [webappski.com/blog](https://webappsk
 
 PRs welcome. Open an issue first if you're planning a non-trivial change so we can sketch the shape together. Bug reports and feature requests at [github.com/webappski/aeo-platform/issues](https://github.com/webappski/aeo-platform/issues).
 
-> **Contributing on Windows:** `npm test` currently uses a POSIX `> /dev/null` redirect in the `test:cli` script and may fail in CMD / native PowerShell. Workarounds: run individual `npm run test:*` scripts, or use Git Bash / WSL where the redirect resolves correctly. Cross-platform fix tracked separately.
+> **Running from source on Windows:** the shebang line in `bin/aeo-tracker.js` is ignored by Windows, so `./bin/aeo-tracker.js` won't work. Use `node bin/aeo-tracker.js <command>` for development, or install globally (`npm install -g .` from the repo root) which creates the `aeo-platform.cmd` wrapper that handles the shebang transparently.
 
 ## License
 

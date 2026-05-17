@@ -521,7 +521,7 @@ A new commercial-only validator blocks methodological / informational queries (e
 - Hand-edit `.aeo-tracker.json` to replace the flagged query with a commercial one like "best X 2026" / "top X for Y" / "X consultants for Z"
 - Temporary escape hatch: `aeo-tracker run --force` (use only for cross-industry interpretation research)
 
-**Fields retained for backward compatibility:** old configs with a `competitors: [...]` field are still readable (field is silently ignored — competitor detection is now fully automatic via the two-model extractor). Missing `category` and `validationCache` fields fall back safely. Outdated model names in `providers[].model` (e.g. `gpt-4o-search-preview`) are auto-replaced by the latest available model via `discoverModels` at run start — no user action needed.
+**Fields retained for backward compatibility:** old configs with a `competitors: [...]` field are still readable (field is silently ignored — competitor detection is now fully automatic via the two-model extractor). Missing `category` and `validationCache` fields fall back safely. Outdated model names in `providers[].model` (e.g. `gpt-4o-search-preview`) are auto-replaced by the latest available model via `discoverModels` at run start — no user action needed. (Note: this auto-replace behaviour was later removed; current versions require `aeo-platform init` to refresh model selection.)
 
 ### Added — Full HTML report
 

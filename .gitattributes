@@ -1,0 +1,26 @@
+# Force LF line endings on all text files regardless of platform.
+# Without this, git on Windows converts LF→CRLF on checkout, which then
+# travels back through commits and produces noisy diffs against macOS/Linux
+# contributors. CRLF in source also breaks split('\n')-based parsers in
+# code that assumes LF (see lib/mention.js).
+#
+# After adding this file, run once: `git add --renormalize .`
+# to bring the index in line with the new policy.
+
+* text=auto eol=lf
+
+# Windows-only scripts must stay CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets — never touch
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.tgz binary
+*.zip binary
+*.pdf binary

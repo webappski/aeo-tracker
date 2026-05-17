@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { CONFIG_FILE, DEFAULT_CONFIG, SUGGEST_MODELS, CLASSIFY_MODELS, PROVIDER_PRIORITY } from '../lib/config.js';
+import { CONFIG_FILE, DEFAULT_CONFIG, PROVIDER_PRIORITY, applyCliModelOverrides } from '../lib/config.js';
 import { PROVIDERS } from '../lib/providers/index.js';
 import { detectMention, findPosition, extractUrls } from '../lib/mention.js';
 import { diff } from '../lib/diff.js';
@@ -21,8 +21,13 @@ import { renderMarkdown, parseRawResponse } from '../lib/report/markdown.js';
 import { renderHtml } from '../lib/report/html.js';
 import { buildMcMetadata } from '../lib/report/mc-metadata.js';
 import { classifyCitations } from '../lib/report/classify-citations.js';
-import { discoverModels } from '../lib/providers/discover.js';
-import { extractUsage, calcCost } from '../lib/providers/pricing.js';
+import { discoverModels, FALLBACK as MODEL_FALLBACK } from '../lib/providers/discover.js';
+import { MAIN_OPTIONS_BY_PROVIDER, detectThinkingActive } from '../lib/providers/main-options.js';
+import { extractUsage, calcCost, estimateWeeklyCost } from '../lib/providers/pricing.js';
+import { formatTpmHint, estimateRunDuration } from '../lib/util/cost-estimate.js';
+import { planSchedule, runScheduled } from '../lib/util/scheduler.js';
+import { estimatePerRequest, getLearnedOrTierLimit } from '../lib/providers/tpm-ledger.js';
+import { createLiveRows } from '../lib/util/live-rows.js';
 // Stable dependencies used in hot paths (init + run + queries-only) — promoted
 // from dynamic imports for clarity and cold-start speed.
 import { runTwoStageValidation, formatValidationResult, hasBlockers } from '../lib/init/research/run-validation.js';
@@ -45,6 +50,7 @@ import { formatResearchFailurePanel } from '../lib/init/research-failure-panel.j
 import { formatAllEnginesFailedPanel } from '../lib/errors/all-engines-failed-panel.js';
 import { formatUnexpectedErrorPanel } from '../lib/errors/unexpected-error-panel.js';
 import { createSpinner } from '../lib/util/spinner.js';
+import { sanitizeForFilename } from '../lib/util/safe-filename.js';
 
 /**
  * Safely extract a human-readable message from any caught value.
@@ -68,6 +74,15 @@ const c = USE_COLOR
       red: '', green: '', yellow: '',
       blue: '', cyan: '', white: '',
     };
+
+// Status glyphs. The Unicode set (✓ ⚠ ✗) renders fine on Windows Terminal,
+// macOS Terminal, and any modern Linux terminal — but old cmd.exe with the
+// default cp866/cp1251 codepage shows them as ?? boxes. We tie the fallback
+// to the same USE_COLOR signal: terminals that don't do ANSI usually don't
+// do Unicode glyphs either, so the ASCII set keeps the output readable.
+const SYM = USE_COLOR
+  ? { ok: '✓', warn: '⚠', err: '✗' }
+  : { ok: '+', warn: '!', err: 'x' };
 
 // ─── Stale artifact cleanup ─────────────────────────────────────────
 //
@@ -278,7 +293,7 @@ function _extractFromRaw(providerName, raw) {
 }
 
 async function _tryReplay(qi, provider, srcDate) {
-  const safeModel = provider.model.replace(/[^a-z0-9.-]/gi, '-');
+  const safeModel = sanitizeForFilename(provider.model);
   const replayPath = join('aeo-responses', srcDate, `q${qi}-${provider.name}-${safeModel}.json`);
   if (!existsSync(replayPath)) return null;
   const raw = JSON.parse(await readFile(replayPath, 'utf-8'));
@@ -330,13 +345,25 @@ async function _resolveReplaySource(explicitDate) {
  * @param {string} name              Provider key — 'openai' | 'anthropic' | 'gemini'
  * @param {string} envVarName        The env var name holding the API key
  */
-async function makeResearchProvider(name, envVarName) {
+async function makeResearchProvider(name, envVarName, providerConfig = DEFAULT_CONFIG.providers) {
   const callFn = (await import(PROVIDER_MODULES[name]))[PROVIDER_CALL_FN[name]];
+  const cfg = providerConfig?.[name] || DEFAULT_CONFIG.providers[name] || {};
+  const main = cfg.model || DEFAULT_CONFIG.providers[name]?.model;
+  const classify = cfg.classifyModel || cfg.model || DEFAULT_CONFIG.providers[name]?.classifyModel
+    || DEFAULT_CONFIG.providers[name]?.model;
+  // MAIN_OPTIONS_BY_PROVIDER injects thinking/reasoning_effort ONLY into mainCall.
+  // classifyCall stays pure (no overhead for extraction/sentiment hot path).
+  // See lib/providers/main-options.js for rationale.
+  const mainOptions = MAIN_OPTIONS_BY_PROVIDER[name] || {};
   return {
     name,
-    providerCall: callFn,
+    providerCall: callFn,                                          // legacy alias — still works (= classifyCall)
+    classifyCall: callFn,                                          // explicit: no mainOptions injection
+    mainCall: (q, k, m, opts = {}) => callFn(q, k, m, { ...mainOptions, ...opts }),
     apiKey: process.env[envVarName],
-    model: SUGGEST_MODELS[name],
+    model: main,                // generation tier — used for brainstorm/research
+    classifyModel: classify,    // classification tier — used by runValidationFlow
+    mainOptions,                // exposed for tests / debug
     label: PROVIDER_LABELS[name],
   };
 }
@@ -346,13 +373,16 @@ async function makeResearchProvider(name, envVarName) {
  * loop in init walks this array on billing/auth/rate-limit errors — first
  * provider that returns a successful research result wins; if all fail, the
  * actionable error panel enumerates what was tried.
- * @param {Object} providerKeyMap  { providerName: envVarName } — any subset
+ * @param {Object} providerKeyMap   { providerName: envVarName } — any subset
+ * @param {Object} [providerConfig] cfg.providers from .aeo-tracker.json (or
+ *                                  DEFAULT_CONFIG.providers as fallback when
+ *                                  invoked before init has written a config)
  * @returns {Promise<Array>} zero or more provider descriptors in priority order
  */
-async function listResearchProviders(providerKeyMap) {
+async function listResearchProviders(providerKeyMap, providerConfig = DEFAULT_CONFIG.providers) {
   const hasKey = (name) => providerKeyMap[name] && process.env[providerKeyMap[name]];
   const available = PROVIDER_PRIORITY.filter(hasKey);
-  return Promise.all(available.map(name => makeResearchProvider(name, providerKeyMap[name])));
+  return Promise.all(available.map(name => makeResearchProvider(name, providerKeyMap[name], providerConfig)));
 }
 
 /**
@@ -360,11 +390,12 @@ async function listResearchProviders(providerKeyMap) {
  * wrapper over listResearchProviders — picks first as primary, second as
  * cross-model validator. Used by validation paths that don't need retry logic
  * (they're already defensive via runValidationFlow).
- * @param {Object} providerKeyMap  { providerName: envVarName } — any subset of providers
+ * @param {Object} providerKeyMap   { providerName: envVarName } — any subset of providers
+ * @param {Object} [providerConfig] cfg.providers from .aeo-tracker.json
  * Returns { primary: null } if no key is available in the environment.
  */
-async function buildResearchProviders(providerKeyMap) {
-  const providers = await listResearchProviders(providerKeyMap);
+async function buildResearchProviders(providerKeyMap, providerConfig = DEFAULT_CONFIG.providers) {
+  const providers = await listResearchProviders(providerKeyMap, providerConfig);
   return {
     primary: providers[0] || null,
     validator: providers[1] || null,
@@ -373,20 +404,27 @@ async function buildResearchProviders(providerKeyMap) {
 
 /**
  * Resolve the two-model competitor-extraction providers (OpenAI + Gemini at
- * their CLASSIFY_MODELS tier). Hard-fails if either key is missing — single-model
+ * their classify tier). Hard-fails if either key is missing — single-model
  * extraction isn't supported to keep the cross-check signal honest.
  */
 async function buildExtractionProviders(providerConfig) {
   const mkProvider = async (name) => {
-    const envVar = providerConfig?.[name]?.env || `${name.toUpperCase()}_API_KEY`;
+    const cfg = providerConfig?.[name] || DEFAULT_CONFIG.providers[name];
+    const envVar = cfg?.env || `${name.toUpperCase()}_API_KEY`;
     const apiKey = process.env[envVar];
     if (!apiKey) return null;
     const callFn = (await import(PROVIDER_MODULES[name]))[PROVIDER_CALL_FN[name]];
+    // Extraction is a structured-classification task — use the cheap classify
+    // tier from the user's config (or DEFAULT_CONFIG fallback).
+    const classifyModel = cfg?.classifyModel
+      || DEFAULT_CONFIG.providers[name]?.classifyModel
+      || cfg?.model
+      || DEFAULT_CONFIG.providers[name]?.model;
     return {
       name,
       providerCall: callFn,
       apiKey,
-      model: CLASSIFY_MODELS[name],
+      model: classifyModel,
       label: PROVIDER_LABELS[name],
     };
   };
@@ -424,13 +462,15 @@ async function runValidationFlow({
     ? queries.length > 0
     : queries.some(q => !(validationCache || []).find(c => c.query === q));
 
-  // Override model with CLASSIFY_MODELS (Haiku / 4o-mini) — classification task, not generation.
-  // ~10× cheaper than SUGGEST_MODELS at equivalent accuracy for structured judgements.
+  // Use the classify-tier model (Haiku / 4o-mini equivalent) — structured
+  // classification task, not generation. ~10× cheaper than the flagship
+  // model at equivalent accuracy for binary/structured judgements.
+  // primary.classifyModel is set by makeResearchProvider from cfg.classifyModel.
   const classifyPrimary = primary
-    ? { ...primary, model: CLASSIFY_MODELS[primary.name] || primary.model }
+    ? { ...primary, model: primary.classifyModel || primary.model }
     : null;
   const classifySecondary = (strictValidation && secondary)
-    ? { ...secondary, model: CLASSIFY_MODELS[secondary.name] || secondary.model }
+    ? { ...secondary, model: secondary.classifyModel || secondary.model }
     : null;
 
   if (willCallLLM && classifyPrimary) {
@@ -449,14 +489,14 @@ async function runValidationFlow({
     const cost = v.costInfo?.costUsd ? `$${v.costInfo.costUsd.toFixed(4)}` : '';
     console.log(`${c.dim}${cost ? `(${cost})` : ''}${c.reset}`);
   } else if (v.cacheHits > 0) {
-    console.log(`${c.dim}  ✓ validation cache hit for all ${v.cacheHits} query/queries (no LLM cost)${c.reset}`);
+    console.log(`${c.dim}  ${SYM.ok} validation cache hit for all ${v.cacheHits} query/queries (no LLM cost)${c.reset}`);
   }
 
   const lines = formatValidationResult(v);
   for (const line of lines) console.log(`  ${c.yellow}${line}${c.reset}`);
 
   if (!hasBlockers(v)) {
-    if (lines.length === 0) console.log(`${c.green}  ✓ All queries pass validation${c.reset}`);
+    if (lines.length === 0) console.log(`${c.green}  ${SYM.ok} All queries pass validation${c.reset}`);
     return v;
   }
 
@@ -469,7 +509,7 @@ async function runValidationFlow({
     return v;
   }
   if (nonInteractive) {
-    console.error(`${c.red}✗ Aborted — queries failed validation. Fix queries or pass --force.${c.reset}`);
+    console.error(`${c.red}${SYM.err} Aborted — queries failed validation. Fix queries or pass --force.${c.reset}`);
     if (onAbort) onAbort(); else process.exit(1);
     return v;
   }
@@ -825,7 +865,7 @@ async function cmdInit(opts = {}) {
     await writeFile(tmpPath, JSON.stringify(updated, null, 2));
     await rename(tmpPath, CONFIG_FILE);
 
-    console.log(`\n${c.green}✓ Queries updated in ${CONFIG_FILE}${c.reset}`);
+    console.log(`\n${c.green}${SYM.ok} Queries updated in ${CONFIG_FILE}${c.reset}`);
     if (mode === 'add') {
       console.log(`  ${c.dim}Mode: additive — original Q1-Q${(existing.queries || []).length} preserved, new queries appended${c.reset}`);
     } else {
@@ -864,7 +904,7 @@ async function cmdInit(opts = {}) {
 
   // P2.2: short brand warning
   if (brand.length <= 3) {
-    console.log(`${c.yellow}⚠ Brand "${brand}" is very short. Mention detection may produce false positives (e.g. "AI" matches every "ai" word in answers).${c.reset}`);
+    console.log(`${c.yellow}${SYM.warn} Brand "${brand}" is very short. Mention detection may produce false positives (e.g. "AI" matches every "ai" word in answers).${c.reset}`);
     if (!nonInteractive) {
       const cont = (await ask(`Continue anyway? [y/N] `, 'n')).trim();
       if (!/^y/i.test(cont)) { process.exit(0); }
@@ -888,7 +928,7 @@ async function cmdInit(opts = {}) {
   const standardFound = Object.entries(standard).filter(([, n]) => n);
   if (standardFound.length > 0) {
     for (const [p, n] of standardFound) {
-      console.log(`  ${c.green}✓${c.reset} ${PROVIDER_LABELS[p]}: ${n}`);
+      console.log(`  ${c.green}${SYM.ok}${c.reset} ${PROVIDER_LABELS[p]}: ${n}`);
       providerKey[p] = n;
     }
   } else {
@@ -970,16 +1010,16 @@ async function cmdInit(opts = {}) {
         const tag = attempt === 1 ? '(required)' : `(required, attempt ${attempt}/${MAX_ATTEMPTS})`;
         const name = (await ask(`  ${PROVIDER_LABELS[p]} env var name ${tag}: `, '')).trim();
         if (!name) {
-          console.log(`    ${c.yellow}⚠ ${PROVIDER_LABELS[p]} cannot be skipped — it's required for the two-model competitor extractor.${c.reset}`);
+          console.log(`    ${c.yellow}${SYM.warn} ${PROVIDER_LABELS[p]} cannot be skipped — it's required for the two-model competitor extractor.${c.reset}`);
           continue;
         }
         const v = verifyEnvVar(name);
         if (!v.ok) {
-          console.log(`    ${c.red}✗ ${name}: ${v.reason}${c.reset}`);
+          console.log(`    ${c.red}${SYM.err} ${name}: ${v.reason}${c.reset}`);
           continue;
         }
         providerKey[p] = name;
-        console.log(`    ${c.green}✓ verified (${v.length} chars)${c.reset}`);
+        console.log(`    ${c.green}${SYM.ok} verified (${v.length} chars)${c.reset}`);
       }
     }
 
@@ -989,11 +1029,11 @@ async function cmdInit(opts = {}) {
       if (!name) continue;
       const v = verifyEnvVar(name);
       if (!v.ok) {
-        console.log(`    ${c.yellow}⚠ ${name}: ${v.reason} — skipping ${PROVIDER_LABELS[p]}${c.reset}`);
+        console.log(`    ${c.yellow}${SYM.warn} ${name}: ${v.reason} — skipping ${PROVIDER_LABELS[p]}${c.reset}`);
         continue;
       }
       providerKey[p] = name;
-      console.log(`    ${c.green}✓ verified (${v.length} chars)${c.reset}`);
+      console.log(`    ${c.green}${SYM.ok} verified (${v.length} chars)${c.reset}`);
     }
   }
 
@@ -1016,6 +1056,24 @@ async function cmdInit(opts = {}) {
   }
 
   console.log(`\n${c.green}Configured providers: ${Object.keys(providerKey).map(p => PROVIDER_LABELS[p]).join(', ')}${c.reset}`);
+
+  // Init no longer chooses models. Models are discovered fresh at each
+  // `aeo-tracker run` via lib/providers/discover.js (HTTP fetch of /v1/models
+  // per provider + regex sort). Init just seeds `.aeo-tracker.json` with
+  // FALLBACK defaults — used only if discovery fails (provider down / network).
+  console.log(`\n${c.dim}Models will be discovered dynamically at each \`run\` (HTTP fetch of /v1/models per provider). Configured providers: ${Object.keys(providerKey).map(p => PROVIDER_LABELS[p]).join(', ')}${c.reset}`);
+
+  /** @type {Object<string,{model:string,classifyModel:string,env:string}>} */
+  const selectedProviders = {};
+  for (const [p, envName] of Object.entries(providerKey)) {
+    const fb = MODEL_FALLBACK[p];
+    if (!fb) continue;
+    selectedProviders[p] = {
+      model: fb.main,
+      classifyModel: fb.classify,
+      env: envName,
+    };
+  }
 
   // Step 4 — manual or auto
   let mode;
@@ -1054,7 +1112,7 @@ async function cmdInit(opts = {}) {
   }
 
   if (mode === 'auto') {
-    const researchProviders = await listResearchProviders(providerKey);
+    const researchProviders = await listResearchProviders(providerKey, selectedProviders);
     if (researchProviders.length === 0) {
       console.log(`${c.yellow}No LLM-capable provider configured (need OpenAI, Anthropic, or Gemini). Falling back to manual.${c.reset}`);
     } else {
@@ -1079,9 +1137,9 @@ async function cmdInit(opts = {}) {
 
           const site = parseSiteContent(html);
           const issues = detectSiteIssues(site, html);
-          if (issues.includes('BOT_PROTECTED')) console.log(`  ${c.yellow}⚠ Bot protection detected (Cloudflare). Content may be unreliable.${c.reset}`);
-          if (issues.includes('SPA_OR_EMPTY')) console.log(`  ${c.yellow}⚠ Site looks JS-rendered (SPA). Auto-suggest may produce generic results.${c.reset}`);
-          if (issues.includes('TINY_HTML')) console.log(`  ${c.yellow}⚠ Very little HTML returned (${html.length} bytes).${c.reset}`);
+          if (issues.includes('BOT_PROTECTED')) console.log(`  ${c.yellow}${SYM.warn} Bot protection detected (Cloudflare). Content may be unreliable.${c.reset}`);
+          if (issues.includes('SPA_OR_EMPTY')) console.log(`  ${c.yellow}${SYM.warn} Site looks JS-rendered (SPA). Auto-suggest may produce generic results.${c.reset}`);
+          if (issues.includes('TINY_HTML')) console.log(`  ${c.yellow}${SYM.warn} Very little HTML returned (${html.length} bytes).${c.reset}`);
           if (issues.length > 0 && !nonInteractive) {
             const cont = (await ask(`Continue anyway? [y/N] `, 'n')).trim();
             if (!/^y/i.test(cont)) throw new Error('user aborted after site issues');
@@ -1090,7 +1148,7 @@ async function cmdInit(opts = {}) {
           // P0.4: brand-on-site check
           const allSiteText = `${site.title} ${site.metaDesc} ${(site.h1 || []).join(' ')} ${(site.h2 || []).join(' ')} ${site.text || ''}`.toLowerCase();
           if (!allSiteText.includes(brand.toLowerCase())) {
-            console.log(`${c.yellow}⚠ Brand "${brand}" not found anywhere on ${fullUrl}.${c.reset}`);
+            console.log(`${c.yellow}${SYM.warn} Brand "${brand}" not found anywhere on ${fullUrl}.${c.reset}`);
             console.log(`  Possible: typo in brand, wrong domain, or brand not on homepage.`);
             if (!nonInteractive) {
               const cont = (await ask(`Continue anyway? [y/N] `, 'n')).trim();
@@ -1135,7 +1193,7 @@ async function cmdInit(opts = {}) {
             const validator = researchProviders.find((_, j) => j !== i) || null;
 
             if (i === 0 && !validator) {
-              console.log(`${c.yellow}  ⚠ Cross-model validation skipped — only one LLM provider available (single-model bias risk).${c.reset}`);
+              console.log(`${c.yellow}  ${SYM.warn} Cross-model validation skipped — only one LLM provider available (single-model bias risk).${c.reset}`);
             }
             if (i > 0) {
               console.log(`${c.dim}  Retrying brainstorm with ${primary.label}...${c.reset}`);
@@ -1156,7 +1214,7 @@ async function cmdInit(opts = {}) {
                 suggestionLang = s.language || site.lang;
                 const ambiguous = detectAmbiguousQueries(queries);
                 if (ambiguous.length > 0) {
-                  console.log(`${c.yellow}  ⚠ ${ambiguous.length} ambiguous acronyms detected — consider --auto (full research) next time${c.reset}`);
+                  console.log(`${c.yellow}  ${SYM.warn} ${ambiguous.length} ambiguous acronyms detected — consider --auto (full research) next time${c.reset}`);
                 }
               } else {
                 // Full research pipeline (v0.5 default)
@@ -1307,7 +1365,7 @@ async function cmdInit(opts = {}) {
   // Two-stage validation (static acronym + LLM industry-fit). Single shared helper —
   // see lib/init/research/run-validation.js. Cache written to config below so `run`
   // can trust verdicts without re-paying $0.005 on every invocation.
-  const validationProviders = await buildResearchProviders(providerKey);
+  const validationProviders = await buildResearchProviders(providerKey, selectedProviders);
   const _geoForValidation = (typeof geoTags !== 'undefined' && geoTags) ? geoTags : detectGeography(domain, {});
   const recovery = await runValidationWithRecovery({
     queries,
@@ -1332,14 +1390,11 @@ async function cmdInit(opts = {}) {
   queries = recovery.queries;
   const validation = recovery.v;
 
-  // P1.3: MODELS from single source of truth
-  const MODELS = Object.fromEntries(
-    Object.entries(DEFAULT_CONFIG.providers).map(([k, v]) => [k, v.model])
-  );
-  const providers = {};
-  for (const [p, envName] of Object.entries(providerKey)) {
-    providers[p] = { model: MODELS[p], env: envName };
-  }
+  // Persist provider defaults. `selectedProviders` was seeded from FALLBACK
+  // constants in lib/providers/discover.js — these defaults are the safety net
+  // when `aeo-tracker run` discovery cannot reach a provider's /v1/models endpoint.
+  // Actual model selection happens fresh at each run via discoverModels.
+  const providers = selectedProviders;
 
   // v0.7 — initialise basket version on first save
   const { initialBasket } = await import('../lib/init/basket-history.js');
@@ -1363,7 +1418,7 @@ async function cmdInit(opts = {}) {
   await writeFile(tmpPath, JSON.stringify(config, null, 2));
   await rename(tmpPath, CONFIG_FILE);
 
-  console.log(`\n${c.green}✓ Created ${CONFIG_FILE}${c.reset}`);
+  console.log(`\n${c.green}${SYM.ok} Created ${CONFIG_FILE}${c.reset}`);
   console.log(`  Brand: ${brand} | Domain: ${domain}`);
   console.log(`  Queries: ${queries.length}, Providers: ${Object.keys(providers).length}`);
   console.log(`\nNext: ${c.cyan}aeo-platform run${c.reset}\n`);
@@ -1425,6 +1480,16 @@ async function cmdRun(options = {}) {
   }
 
   const config = JSON.parse(await readFile(CONFIG_FILE, 'utf-8'));
+  // Apply --openai-model / --gemini-model / etc. overrides BEFORE destructuring
+  // providerConfig — overrides mutate config.providers in place so downstream
+  // provider discovery picks up the user's chosen model. Disk config is not
+  // touched; this is per-run only.
+  applyCliModelOverrides(config, {
+    openaiModel:     options.openaiModel,
+    geminiModel:     options.geminiModel,
+    anthropicModel:  options.anthropicModel,
+    perplexityModel: options.perplexityModel,
+  });
   const { brand, domain, queries: rawQueries, providers: providerConfig } = config;
 
   if (!brand || !domain || !rawQueries?.length) {
@@ -1456,31 +1521,64 @@ async function cmdRun(options = {}) {
     }
   }
 
-  // Discover current search-capable models for each configured provider
+  // Discover current search-capable models for each configured provider.
+  // Parallel HTTP fetch of /v1/models (~1-2s total with 10s per-provider
+  // timeout). Fallback chain on failure:
+  //   - 401/403 (authError) → skip provider entirely (same bad key for run
+  //                          would fail too)
+  //   - other failure → fallback to cfg.model from .aeo-tracker.json
+  //   - cfg.model also missing → skip with hint to re-init
   console.log(`\n${c.dim}Discovering current models…${c.reset}`);
+  const discoveryResults = await Promise.all(
+    Object.entries(providerConfig || DEFAULT_CONFIG.providers).map(async ([name, cfg]) => {
+      try {
+        const envKey = cfg.env || `${name.toUpperCase()}_API_KEY`;
+        const apiKey = process.env[envKey];
+        if (!apiKey) return { name, cfg, skip: 'no-key', envKey };
+        const { models, authError } = await discoverModels(name, apiKey, cfg.baseURL);
+        return { name, cfg, apiKey, models, authError };
+      } catch (err) {
+        // Defensive per-task catch: ensures one crash doesn't break Promise.all.
+        return { name, cfg, skip: 'crash', err };
+      }
+    }),
+  );
+
   const activeProviders = [];
-  for (const [name, cfg] of Object.entries(providerConfig || DEFAULT_CONFIG.providers)) {
-    const envKey = cfg.env || `${name.toUpperCase()}_API_KEY`;
-    const apiKey = process.env[envKey];
-    if (!apiKey) {
-      console.log(`${c.dim}  skip ${name} — no ${envKey}${c.reset}`);
+  for (const r of discoveryResults) {
+    if (r.skip === 'no-key') {
+      console.log(`${c.dim}  skip ${r.name} — no ${r.envKey}${c.reset}`);
       continue;
     }
-    const discovered = await discoverModels(name, apiKey, cfg.baseURL);
-    const models = discovered ?? (cfg.model ? [cfg.model] : null);
-    if (!models || models.length === 0) {
-      console.log(`${c.dim}  skip ${name} — no models discovered${c.reset}`);
+    if (r.skip === 'crash') {
+      console.error(`  ${c.yellow}${SYM.warn}${c.reset} ${r.name} — discovery crashed: ${r.err?.message}. Skipping.${c.reset}`);
       continue;
     }
-    console.log(`  ${c.green}✓${c.reset} ${name}: ${models.join(', ')}`);
-    for (const modelId of models) {
+    if (r.authError) {
+      console.error(`  ${c.red}${SYM.err}${c.reset} ${r.name} — invalid API key (HTTP 401/403). Skipping this provider.${c.reset}`);
+      continue;
+    }
+    // Discovery success → use discovered. Discovery soft-fail → fallback to cfg.model.
+    const finalModels = r.models ?? (r.cfg.model ? [r.cfg.model] : null);
+    if (!finalModels?.length) {
+      console.log(`${c.dim}  skip ${r.name} — discovery failed and no fallback (re-run: aeo-platform init)${c.reset}`);
+      continue;
+    }
+    const sourceLabel = r.models ? '' : ` ${c.dim}(fallback)${c.reset}`;
+    console.log(`  ${c.green}${SYM.ok}${c.reset} ${r.name}: ${finalModels.join(', ')}${sourceLabel}`);
+    for (const modelId of finalModels) {
       // trainingModel = the no-search variant, used by `--depth=full`. null
       // means the provider has no training-data mode (e.g. Perplexity).
-      const trainingModel = deriveTrainingModel(name, modelId);
+      const trainingModel = deriveTrainingModel(r.name, modelId);
       activeProviders.push({
-        name, model: modelId, trainingModel,
-        colLabel: _modelColLabel(name, modelId),
-        apiKey, ...PROVIDERS[name],
+        name: r.name,
+        model: modelId,
+        trainingModel,
+        classifyModel: r.cfg.classifyModel || MODEL_FALLBACK[r.name]?.classify,
+        mainOptions: MAIN_OPTIONS_BY_PROVIDER[r.name] || {},
+        colLabel: _modelColLabel(r.name, modelId),
+        apiKey: r.apiKey,
+        ...PROVIDERS[r.name],
       });
     }
   }
@@ -1539,6 +1637,32 @@ async function cmdRun(options = {}) {
   console.log(`${c.dim}Models: ${activeProviders.map(p => p.colLabel).join(', ')}${c.reset}`);
   console.log(`${c.dim}Queries: ${queries.length}${c.reset}\n`);
 
+  // Pre-flight ETA: warn if any selected model has TPM headroom too small for
+  // this run (will be paced across multiple 60s windows). Tone: honest "this
+  // will take ~N seconds", not panicking ⚠ — the adaptive scheduler (below)
+  // guarantees the run COMPLETES regardless.
+  if (!options.json) {
+    const cmdKey = options.depth === 'full' ? 'run-depth-full'
+      : options.strictValidation ? 'run-strict' : 'run';
+    const pacedLines = [];
+    for (const p of activeProviders) {
+      // thinkingActive — single source of truth in main-options.js.
+      // Same predicate used by any future init/preview hint, so ETA shown
+      // upfront matches actual runtime spend.
+      const eta = estimateRunDuration(p.name, p.model, cmdKey, {
+        thinkingActive: detectThinkingActive(p.name, p.model),
+      });
+      if (eta.mode === 'paced') {
+        pacedLines.push(`${p.name}/${p.model}: paced across ~${eta.etaSeconds}s (tier 1: ${eta.limit.tpm.toLocaleString()} TPM)`);
+      }
+    }
+    if (pacedLines.length > 0) {
+      process.stderr.write(`${c.dim}Pacing to fit rate limits:${c.reset}\n`);
+      for (const line of pacedLines) process.stderr.write(`${c.dim}  ${line}${c.reset}\n`);
+      process.stderr.write(`${c.dim}  Tip: --openai-model gpt-5 (no web search, 15× higher TPM) skips pacing.${c.reset}\n\n`);
+    }
+  }
+
   // Pre-flight: two-stage validation with cache lookup.
   // Cache-hit (validated at init) → trust, no LLM cost.
   // Cache-miss (user hand-edited .aeo-tracker.json) → auto-run LLM validator inline
@@ -1569,16 +1693,21 @@ async function cmdRun(options = {}) {
   try {
     extractionProviders = await buildExtractionProviders(providerConfig);
   } catch (err) {
-    console.error(`\n${c.red}✗ ${errMsg(err)}${c.reset}`);
+    console.error(`\n${c.red}${SYM.err} ${errMsg(err)}${c.reset}`);
     process.exit(1);
   }
   console.log(`${c.dim}  Extractor: ${extractionProviders.primary.model} + ${extractionProviders.secondary.model} (parallel cross-check)${c.reset}\n`);
 
-  // Load today's existing _summary.json — skip checks that already succeeded
+  // Load today's existing _summary.json — skip checks that already succeeded.
+  // --force bypasses this entirely: every cell runs fresh, the new summary
+  // overwrites the old one, and the merge block below stays a no-op because
+  // existingSummary remains null.
   const summaryPath = join(responseDir, '_summary.json');
   let existingSummary = null;
   const skipKeys = new Set();
-  if (existsSync(summaryPath)) {
+  if (options.force && existsSync(summaryPath)) {
+    console.log(`${c.yellow}  --force set — bypassing today's response cache, every cell will be re-queried${c.reset}\n`);
+  } else if (existsSync(summaryPath)) {
     try {
       existingSummary = JSON.parse(await readFile(summaryPath, 'utf-8'));
       for (const r of existingSummary.results || []) {
@@ -1607,11 +1736,21 @@ async function cmdRun(options = {}) {
   }
   // End replay
 
-  // Run all checks in parallel
+  // Run all checks via the adaptive scheduler. Tasks are collected with their
+  // (provider, model) ledger key — `planSchedule` packs each (provider, model)
+  // bucket into 60s TPM windows. Buckets run in parallel; tasks within a
+  // bucket fire per the plan, semaphore-limited downstream.
+  //
+  // Live-row UI: each task gets a row that animates while running and shows
+  // live cooldown/pacing countdowns. `--json` mode skips live entirely (stdout
+  // reserved for the JSON blob). Non-TTY consumers get a structured start/finish
+  // log per task via the manager's non-animate path.
   const results = [];
-  const tasks = [];
+  /** @type {Map<string, Array<{fn: () => Promise<void>, estimatedTokens: number}>>} */
+  const tasksByCdKey = new Map();
   // Extraction cost accumulates across all cells (each cell fires two LLM calls).
   const extractionCostTotal = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  const live = options.json ? null : createLiveRows({ stream: process.stderr });
 
   for (let qi = 0; qi < queries.length; qi++) {
     const baseQuery = queries[qi];
@@ -1622,27 +1761,64 @@ async function cmdRun(options = {}) {
           // training-data pass is skipped for providers that don't support it
           // (e.g. Perplexity is search-only by design).
           if (mode === 'training' && !provider.trainingModel) continue;
-          tasks.push((async () => {
+          const cellModelForKey = mode === 'training' ? provider.trainingModel : provider.model;
+          const cdKey = `${provider.name}:${cellModelForKey}`;
+          const regionTag = region ? `[${region.code.toUpperCase()}]` : '';
+          const modeTag   = mode === 'training' ? '[T]' : '';
+          const tag = `Q${qi + 1}${regionTag}${modeTag}/${provider.colLabel}`;
+          // taskId includes region for --geo uniqueness — same (cdKey, queryIdx)
+          // appears twice with --geo=us,uk and we'd otherwise overwrite each other.
+          const taskId = `${cdKey}#${qi}#${region?.code || ''}#${mode}`;
+          live?.add(taskId, tag);
+          const taskFn = async () => {
             const cellModel = mode === 'training' ? provider.trainingModel : provider.model;
-            const callOpts  = mode === 'training' ? { webSearch: false } : {};
-            const regionTag = region ? `[${region.code.toUpperCase()}]` : '';
-            const modeTag   = mode === 'training' ? '[T]' : '';
-            const tag = `Q${qi + 1}${regionTag}${modeTag}/${provider.colLabel}`;
+            // Main query call: inject mainOptions (reasoning_effort=high for
+            // OpenAI, thinking-enabled for Anthropic). Training call: keep clean
+            // (measure base training-corpus knowledge without reasoning influence).
+            // Per-provider regex gate in openai.js/anthropic.js silently drops
+            // incompatible options если model не поддерживает.
+            const callOpts  = mode === 'training'
+              ? { webSearch: false }
+              : { ...(provider.mainOptions || {}) };
             const skipKey = `Q${qi + 1}:${region?.code || ''}:${provider.name}:${cellModel}:${mode}`;
-            if (skipKeys.has(skipKey)) return;
+            if (skipKeys.has(skipKey)) {
+              // Skip: nothing to do. Remove the row (don't leave it stuck in queued).
+              live?.finish(taskId, { status: 'done', detail: 'cached from earlier run today' });
+              return;
+            }
             const t0 = Date.now();
             try {
-              process.stdout.write(`${c.dim}  Running ${tag}...${c.reset}`);
+              // In --json mode (live === null) stay silent — stdout is reserved
+              // for the final JSON blob, any human-readable line corrupts the
+              // consumer's parser. Live manager handles UI in interactive mode.
+              if (live) live.update(taskId, { status: 'running', detail: 'firing…' });
+
+              // Per-task status reporter: cooldown / ledger-wait / firing / retrying /
+              // tokens events from withProviderCall + withRetry → row updates.
+              const onStatus = live ? (ev) => {
+                if (ev.kind === 'cooldown') {
+                  live.update(taskId, { status: 'cooldown', detail: `${(ev.ms / 1000).toFixed(0)}s waiting for TPM window` });
+                } else if (ev.kind === 'ledger-wait') {
+                  live.update(taskId, { status: 'ledger-wait', detail: `${(ev.ms / 1000).toFixed(0)}s pacing` });
+                } else if (ev.kind === 'firing') {
+                  live.update(taskId, { status: 'running', detail: 'firing…' });
+                } else if (ev.kind === 'retrying') {
+                  live.update(taskId, { status: 'running', detail: `retrying (attempt ${ev.attempt})` });
+                } else if (ev.kind === 'tokens' && process.env.AEO_LOG_TOKENS === '1') {
+                  live.log(`  [tokens] ${ev.cdKey}: input=${ev.input} output=${ev.output} total=${ev.input + ev.output}`);
+                }
+              } : undefined;
+
               // Replay mode (see replay-mode block at top of file)
               const replayed = replaySrcDate ? await _tryReplay(qi + 1, provider, replaySrcDate) : null;
               // End replay
               const { text, citations, raw } = replayed
-                || await provider.call(query, provider.apiKey, cellModel, callOpts);
+                || await provider.call(query, provider.apiKey, cellModel, { ...callOpts, onStatus });
               const elapsedMs = Date.now() - t0;
 
               // Save raw response — region + mode suffixes in filename so
               // multi-region / dual-pass runs don't collide.
-              const safeModel = cellModel.replace(/[^a-z0-9.-]/gi, '-');
+              const safeModel = sanitizeForFilename(cellModel);
               const regionSuffix = region ? `-${region.code}` : '';
               const modeSuffix = mode === 'training' ? '-training' : '';
               const rawFile = join(responseDir, `q${qi + 1}${regionSuffix}${modeSuffix}-${provider.name}-${safeModel}.json`);
@@ -1742,10 +1918,27 @@ async function cmdRun(options = {}) {
               // Replay mode (see replay-mode block at top of file)
               const replayTag = replayed ? ` ${c.yellow}[replay]${c.reset}` : '';
               // End replay
-              process.stdout.write(`\r  ${icon}${c.reset} ${tag}${replayTag} (${citations.length} citations, ${elapsedMs}ms${costStr})\n`);
+              if (live) {
+                const plainIcon = mention === 'yes' ? 'YES' : mention === 'src' ? 'SRC' : 'NO';
+                live.finish(taskId, {
+                  status: 'done',
+                  detail: `${plainIcon}${replayed ? ' [replay]' : ''} (${citations.length} citations, ${elapsedMs}ms${costStr})`,
+                });
+              }
+              // --json mode (live === null): silent — result already pushed to
+              // results[] above. Consumer parses JSON from stdout, no human text.
             } catch (err) {
               const elapsedMs = Date.now() - t0;
-              process.stdout.write(`\r  ${c.red}ERR${c.reset} ${tag}: ${errMsg(err)}\n`);
+              // For model-deprecated errors, append an inline hint to the ERR
+              // line — re-run init is the only fix, no point in retrying.
+              const cls = classifyProviderError(err);
+              if (live) {
+                live.finish(taskId, {
+                  status: 'error',
+                  detail: `${errMsg(err)}${cls.category === 'model-deprecated' ? ' — re-run `aeo-platform init`' : ''}`,
+                });
+              }
+              // --json mode: error is captured in results[].mention='error' below.
               results.push({
                 query: `Q${qi + 1}`, queryText: baseQuery,
                 provider: provider.name, label: provider.label,
@@ -1758,13 +1951,57 @@ async function cmdRun(options = {}) {
                 error: errMsg(err),
               });
             }
-          })());
+          };  // end of taskFn
+
+          // Estimated token cost — fed into planSchedule so each (provider, model)
+          // bucket can size its 60s windows. Pulled from the same ledger that the
+          // ledger-throttle uses, so estimates and reservations agree.
+          const est = estimatePerRequest(cdKey);
+          if (!tasksByCdKey.has(cdKey)) tasksByCdKey.set(cdKey, []);
+          tasksByCdKey.get(cdKey).push({ fn: taskFn, estimatedTokens: est });
         }
       }
     }
   }
 
-  await Promise.all(tasks);
+  // Per-(provider, model) scheduling: each cdKey gets its own pacing plan,
+  // sized by the learned-or-tier limit. Buckets run in parallel since their
+  // TPM windows are independent (cross-provider AND cross-model).
+  //
+  // Pre-compute schedules so we can print all pacing lines BEFORE live.start().
+  // If we wrote them inside the map below, the writes would race with live
+  // render frames (live starts before Promise.all awaits the map's promises).
+  const cdKeySchedules = [...tasksByCdKey.entries()].map(([cdKey, taskMetas]) => {
+    const [provName, modelId] = cdKey.split(':');
+    const limit = getLearnedOrTierLimit(provName, modelId);
+    const schedule = planSchedule(taskMetas, limit);
+    return { cdKey, taskMetas, schedule };
+  });
+  if (!options.json) {
+    for (const { cdKey, taskMetas, schedule } of cdKeySchedules) {
+      const lastWindow = schedule[schedule.length - 1]?.fireAt || 0;
+      if (lastWindow === 0) continue;
+      // Real wall-clock ETA = lastWindow + ~5s for the final call to round-trip.
+      const etaSec = Math.round(lastWindow / 1000) + 5;
+      process.stderr.write(
+        `  ${c.dim}Pacing ${taskMetas.length} ${cdKey} ${taskMetas.length === 1 ? 'task' : 'tasks'} across ~${etaSec}s${c.reset}\n`,
+      );
+    }
+  }
+
+  live?.start();
+  try {
+    const schedulingPromises = cdKeySchedules.map(({ taskMetas, schedule }) =>
+      runScheduled(taskMetas.map(t => t.fn), schedule),
+    );
+    await Promise.all(schedulingPromises);
+  } finally {
+    // Always restore terminal state — even if a task throws (Promise.all rejects),
+    // we MUST stop the animation timer, restore the cursor, flush log buffer,
+    // and deregister signal handlers. Otherwise the terminal is left broken
+    // (hidden cursor, half-drawn rows) for the user's next shell prompt.
+    live?.stop();
+  }
 
   // Merge newly-run results with successful results carried over from prior run today
   if (existingSummary) {
@@ -2328,131 +2565,207 @@ async function cmdReport(args = {}) {
     }
   }
 
-  // ─── Citation classification (LLM-based, cached) ───
-  // Classify top cited domains against brand's category. Universal — works for any
-  // language or country. Result cached in _summary.json; costs $0 on subsequent runs.
-  if (!latest.citationClassification && (latest.topCanonicalSources || []).length > 0) {
-    let cfg = {};
-    let cfgReadError = null;
-    try {
-      cfg = JSON.parse(await readFile(CONFIG_FILE, 'utf-8'));
-    } catch (err) {
-      cfgReadError = err;
-    }
+  // ─── Wave 1: independent blocks run in parallel ───────────────────────
+  // Citation classification (LLM) | LLM actions (LLM) | Page signals (HTTP)
+  // | Crawlability (HTTP) | Entity graph (HTTP) | Competitor pricing (heuristic).
+  // Authority presence is the only dependency — it reads pageSignals — so it
+  // runs sequentially after this wave. Each task has its own try/catch so a
+  // single failure doesn't cancel the others. Logs may interleave (each line
+  // carries its own block-prefix marker, so output stays readable).
+  await Promise.all([
+    // ─── Citation classification (LLM-based, cached) ───
+    // Classify top cited domains against brand's category. Universal — works for any
+    // language or country. Result cached in _summary.json; costs $0 on subsequent runs.
+    (async () => {
+      if (!latest.citationClassification && (latest.topCanonicalSources || []).length > 0) {
+        let cfg = {};
+        let cfgReadError = null;
+        try {
+          cfg = JSON.parse(await readFile(CONFIG_FILE, 'utf-8'));
+        } catch (err) {
+          cfgReadError = err;
+        }
 
-    const brand = latest.brand || cfg.brand || '';
-    const category = cfg.category || '';
-    const providersCfg = { ...DEFAULT_CONFIG.providers, ...(cfg.providers || {}) };
+        const brand = latest.brand || cfg.brand || '';
+        const category = cfg.category || '';
+        const providersCfg = { ...DEFAULT_CONFIG.providers, ...(cfg.providers || {}) };
 
-    if (cfgReadError) {
-      console.log(`  ${c.dim}Citation classification skipped: could not read ${CONFIG_FILE} (${errMsg(cfgReadError)})${c.reset}`);
-    } else if (!category) {
-      console.log(`  ${c.dim}Citation classification skipped: no category in ${CONFIG_FILE}. Re-run: aeo-platform init${c.reset}`);
-    } else {
-      // Pick first provider with an available API key
-      const providerEntry = Object.entries(providersCfg).find(([, p]) => process.env[p.env]);
+        if (cfgReadError) {
+          console.log(`  ${c.dim}Citation classification skipped: could not read ${CONFIG_FILE} (${errMsg(cfgReadError)})${c.reset}`);
+        } else if (!category) {
+          console.log(`  ${c.dim}Citation classification skipped: no category in ${CONFIG_FILE}. Re-run: aeo-platform init${c.reset}`);
+        } else {
+          // Pick first provider with an available API key
+          const providerEntry = Object.entries(providersCfg).find(([, p]) => process.env[p.env]);
 
-      if (!providerEntry) {
-        console.log(`  ${c.dim}Citation classification skipped: no API key found in environment${c.reset}`);
-      } else {
-        const [providerKey, providerCfg] = providerEntry;
-        const providerCall = PROVIDERS[providerKey]?.call;
-        if (providerCall) {
-          console.log(`  ${c.dim}Classifying citations via ${PROVIDERS[providerKey].label}...${c.reset}`);
-          try {
-            const classification = await classifyCitations({
-              brand, category,
-              topCanonicalSources: latest.topCanonicalSources,
-              providerCall,
-              apiKey: process.env[providerCfg.env],
-              model: providerCfg.model,
-            });
-            latest.citationClassification = classification;
-            await persistSnapshot(latest);
-            const off = classification.offCategoryDomains.length;
-            if (off > 0) {
-              console.log(`  ${c.yellow}⚠ ${off} cited domain${off !== 1 ? 's' : ''} classified as off-category${c.reset}`);
-            } else {
-              console.log(`  ${c.green}✓ All cited domains match brand category${c.reset}`);
+          if (!providerEntry) {
+            console.log(`  ${c.dim}Citation classification skipped: no API key found in environment${c.reset}`);
+          } else {
+            const [providerKey, providerCfg] = providerEntry;
+            const providerCall = PROVIDERS[providerKey]?.call;
+            if (providerCall) {
+              console.log(`  ${c.dim}Classifying citations via ${PROVIDERS[providerKey].label}...${c.reset}`);
+              try {
+                const classification = await classifyCitations({
+                  brand, category,
+                  topCanonicalSources: latest.topCanonicalSources,
+                  providerCall,
+                  apiKey: process.env[providerCfg.env],
+                  model: providerCfg.model,
+                });
+                latest.citationClassification = classification;
+                await persistSnapshot(latest);
+                const off = classification.offCategoryDomains.length;
+                if (off > 0) {
+                  console.log(`  ${c.yellow}${SYM.warn} ${off} cited domain${off !== 1 ? 's' : ''} classified as off-category${c.reset}`);
+                } else {
+                  console.log(`  ${c.green}${SYM.ok} All cited domains match brand category${c.reset}`);
+                }
+              } catch (err) {
+                console.log(`  ${c.dim}Citation classification skipped: ${errMsg(err)}${c.reset}`);
+                if (process.env.DEBUG) console.error(err.stack);
+              }
             }
-          } catch (err) {
-            console.log(`  ${c.dim}Citation classification skipped: ${errMsg(err)}${c.reset}`);
-            if (process.env.DEBUG) console.error(err.stack);
           }
         }
+      } else if (latest.citationClassification) {
+        console.log(`  ${c.dim}Citation classification loaded from cache${c.reset}`);
       }
-    }
-  } else if (latest.citationClassification) {
-    console.log(`  ${c.dim}Citation classification loaded from cache${c.reset}`);
-  }
+    })(),
 
-  // ─── LLM action recommendations (cached) ───
-  if (!latest.llmActions) {
-    let cfg = {};
-    try { cfg = JSON.parse(await readFile(CONFIG_FILE, 'utf-8')); } catch { /* skip */ }
-    const category = cfg.category || '';
-    const providersCfg = { ...DEFAULT_CONFIG.providers, ...(cfg.providers || {}) };
-    const providerEntry = Object.entries(providersCfg).find(([, p]) => process.env[p.env]);
-    if (providerEntry && category) {
-      const [providerKey, providerCfg] = providerEntry;
-      const providerCall = PROVIDERS[providerKey]?.call;
-      if (providerCall) {
-        const prev = snapshots.length > 1 ? snapshots[snapshots.length - 2] : null;
-        console.log(`  ${c.dim}Generating recommendations via ${PROVIDERS[providerKey].label}...${c.reset}`);
-        try {
-          const { actions, costInfo } = await deriveActionsWithLLM(latest, prev, category, {
-            providerName: providerKey,
-            providerCall,
-            apiKey: process.env[providerCfg.env],
-            model: SUGGEST_MODELS[providerKey] || providerCfg.model,
-          });
-          latest.llmActions = actions;
-          if (!latest.costByModel) latest.costByModel = [];
-          latest.costByModel.push(costInfo);
-          latest.sessionCostUsd = Math.round(
-            (latest.costByModel.reduce((s, v) => s + (v.costUsd || 0), 0)) * 1_000_000
-          ) / 1_000_000;
-          await persistSnapshot(latest);
-          console.log(`  ${c.green}✓ ${actions.length} recommendations generated${c.reset}`);
-        } catch (err) {
-          console.log(`  ${c.yellow}⚠ Recommendations skipped: ${errMsg(err)}${c.reset}`);
+    // ─── LLM action recommendations (cached) ───
+    (async () => {
+      if (!latest.llmActions) {
+        let cfg = {};
+        try { cfg = JSON.parse(await readFile(CONFIG_FILE, 'utf-8')); } catch { /* skip */ }
+        const category = cfg.category || '';
+        const providersCfg = { ...DEFAULT_CONFIG.providers, ...(cfg.providers || {}) };
+        const providerEntry = Object.entries(providersCfg).find(([, p]) => process.env[p.env]);
+        if (providerEntry && category) {
+          const [providerKey, providerCfg] = providerEntry;
+          const providerCall = PROVIDERS[providerKey]?.call;
+          if (providerCall) {
+            const prev = snapshots.length > 1 ? snapshots[snapshots.length - 2] : null;
+            console.log(`  ${c.dim}Generating recommendations via ${PROVIDERS[providerKey].label}...${c.reset}`);
+            try {
+              const { actions, costInfo } = await deriveActionsWithLLM(latest, prev, category, {
+                providerName: providerKey,
+                providerCall,
+                apiKey: process.env[providerCfg.env],
+                // LLM actions = generation task → use the user's flagship model.
+                model: providerCfg.model,
+              });
+              latest.llmActions = actions;
+              if (!latest.costByModel) latest.costByModel = [];
+              latest.costByModel.push(costInfo);
+              latest.sessionCostUsd = Math.round(
+                (latest.costByModel.reduce((s, v) => s + (v.costUsd || 0), 0)) * 1_000_000
+              ) / 1_000_000;
+              await persistSnapshot(latest);
+              console.log(`  ${c.green}${SYM.ok} ${actions.length} recommendations generated${c.reset}`);
+            } catch (err) {
+              console.log(`  ${c.yellow}${SYM.warn} Recommendations skipped: ${errMsg(err)}${c.reset}`);
+            }
+          }
         }
-      }
-    }
-  } else {
-    console.log(`  ${c.dim}Recommendations loaded from cache${c.reset}`);
-  }
-
-  // ─── v1.1: Page signals (own-domain HTML crawl, cached) ───
-  // Surfaces H1/H2 patterns, answer-capsule coverage, Schema.org block
-  // count + types, FAQ count. Pure HTTP fetch, no LLM cost.
-  //
-  // Runs BEFORE the authority block — authority profile detection reads
-  // pageSignals.homepage.headings as a category fallback when init didn't
-  // fill category. Order matters: without fresh pageSignals here, authority
-  // sees `latest.pageSignals === undefined` and falls back to default
-  // profile, missing the dev-tool / AEO-studio signal.
-  if (!latest.pageSignals && latest.domain && !args.noPageSignals) {
-    console.log(`  ${c.dim}Crawling own-domain page signals (${latest.domain})...${c.reset}`);
-    try {
-      latest.pageSignals = await checkPageSignals(latest.domain);
-      await persistSnapshot(latest);
-      const ps = latest.pageSignals.homepage;
-      if (ps?.ok) {
-        console.log(`  ${c.green}✓${c.reset} h1:${ps.headings.h1.count} h2:${ps.headings.h2.count} capsules:${ps.answerCapsules.coverage}% schemas:${ps.schemaOrg.blockCount}`);
       } else {
-        console.log(`  ${c.yellow}⚠ Page signals: ${ps?.error || 'unavailable'}${c.reset}`);
+        console.log(`  ${c.dim}Recommendations loaded from cache${c.reset}`);
       }
-    } catch (err) {
-      console.log(`  ${c.yellow}⚠ Page signals skipped: ${errMsg(err)}${c.reset}`);
-    }
-  } else if (latest.pageSignals) {
-    console.log(`  ${c.dim}Page signals loaded from cache${c.reset}`);
-  } else if (args.noPageSignals) {
-    console.log(`  ${c.dim}Page signals skipped (--no-page-signals)${c.reset}`);
-  }
+    })(),
 
-  // ─── Authority presence (Wikipedia + Reddit + GitHub if dev-tool, cached) ───
+    // ─── v1.1: Page signals (own-domain HTML crawl, cached) ───
+    // Surfaces H1/H2 patterns, answer-capsule coverage, Schema.org block
+    // count + types, FAQ count. Pure HTTP fetch, no LLM cost.
+    // Authority presence (Wave 2 below) reads latest.pageSignals.
+    (async () => {
+      if (!latest.pageSignals && latest.domain && !args.noPageSignals) {
+        console.log(`  ${c.dim}Crawling own-domain page signals (${latest.domain})...${c.reset}`);
+        try {
+          latest.pageSignals = await checkPageSignals(latest.domain);
+          await persistSnapshot(latest);
+          const ps = latest.pageSignals.homepage;
+          if (ps?.ok) {
+            console.log(`  ${c.green}${SYM.ok}${c.reset} h1:${ps.headings.h1.count} h2:${ps.headings.h2.count} capsules:${ps.answerCapsules.coverage}% schemas:${ps.schemaOrg.blockCount}`);
+          } else {
+            console.log(`  ${c.yellow}${SYM.warn} Page signals: ${ps?.error || 'unavailable'}${c.reset}`);
+          }
+        } catch (err) {
+          console.log(`  ${c.yellow}${SYM.warn} Page signals skipped: ${errMsg(err)}${c.reset}`);
+        }
+      } else if (latest.pageSignals) {
+        console.log(`  ${c.dim}Page signals loaded from cache${c.reset}`);
+      } else if (args.noPageSignals) {
+        console.log(`  ${c.dim}Page signals skipped (--no-page-signals)${c.reset}`);
+      }
+    })(),
+
+    // ─── AI-bot crawlability audit (cached) ───
+    // Pure HTTP fetches, no LLM cost. Surfaces robots.txt blocks and missing
+    // /llms.txt / sitemap.xml — common root causes of "AI doesn't see me".
+    (async () => {
+      if (!latest.crawlability && latest.domain) {
+        console.log(`  ${c.dim}Auditing AI-bot crawlability for ${latest.domain}...${c.reset}`);
+        try {
+          latest.crawlability = await auditCrawlability(latest.domain);
+          await persistSnapshot(latest);
+          const s = latest.crawlability.summary;
+          const flag = s.blockedCount > 0 ? `${c.red}${s.blockedCount} bot${s.blockedCount !== 1 ? 's' : ''} blocked${c.reset}` : `${c.green}all bots OK${c.reset}`;
+          console.log(`  ${c.green}${SYM.ok}${c.reset} robots:${s.hasRobots ? SYM.ok : SYM.err} llms.txt:${s.hasLlmsTxt ? SYM.ok : SYM.err} sitemap:${s.hasSitemap ? SYM.ok : SYM.err} — ${flag}`);
+        } catch (err) {
+          console.log(`  ${c.yellow}${SYM.warn} Crawlability audit skipped: ${errMsg(err)}${c.reset}`);
+        }
+      } else if (latest.crawlability) {
+        console.log(`  ${c.dim}Crawlability audit loaded from cache${c.reset}`);
+      }
+    })(),
+
+    // ─── v1.1: Entity graph (cross-platform sameAs reciprocity, cached) ───
+    // Reuses homepage HTML from pageSignals if available — avoids re-fetch.
+    (async () => {
+      if (!latest.entityGraph && latest.domain && !args.noEntityGraph) {
+        console.log(`  ${c.dim}Verifying cross-platform sameAs chain...${c.reset}`);
+        try {
+          latest.entityGraph = await checkEntityGraph(latest.domain);
+          await persistSnapshot(latest);
+          const eg = latest.entityGraph;
+          if (eg.ok) {
+            console.log(`  ${c.green}${SYM.ok}${c.reset} sameAs:${eg.sameAsCount} reciprocity:${eg.summary.reciprocityRate}%`);
+          } else {
+            console.log(`  ${c.yellow}${SYM.warn} Entity graph: ${eg.error || 'unavailable'}${c.reset}`);
+          }
+        } catch (err) {
+          console.log(`  ${c.yellow}${SYM.warn} Entity graph skipped: ${errMsg(err)}${c.reset}`);
+        }
+      } else if (latest.entityGraph) {
+        console.log(`  ${c.dim}Entity graph loaded from cache${c.reset}`);
+      } else if (args.noEntityGraph) {
+        console.log(`  ${c.dim}Entity graph skipped (--no-entity-graph)${c.reset}`);
+      }
+    })(),
+
+    // ─── v1.1: Competitor pricing tiers (cached, top-5) ───
+    // Heuristic only — no LLM cost. Uses citations from this run.
+    (async () => {
+      if (!latest.competitorPricing && Array.isArray(latest.topCompetitors) && latest.topCompetitors.length > 0 && !args.noPricing) {
+        console.log(`  ${c.dim}Classifying competitor pricing tiers (top-5)...${c.reset}`);
+        try {
+          const allCitations = (latest.results || []).flatMap(r => r.canonicalCitations || []);
+          latest.competitorPricing = await classifyCompetitorPricing(latest.topCompetitors, allCitations, { limit: 5 });
+          await persistSnapshot(latest);
+          const tiers = latest.competitorPricing.map(c => `${c.name}=${c.tier}`).join(' ');
+          console.log(`  ${c.green}${SYM.ok}${c.reset} ${tiers}`);
+        } catch (err) {
+          console.log(`  ${c.yellow}${SYM.warn} Competitor pricing skipped: ${errMsg(err)}${c.reset}`);
+        }
+      } else if (latest.competitorPricing) {
+        console.log(`  ${c.dim}Competitor pricing loaded from cache${c.reset}`);
+      } else if (args.noPricing) {
+        console.log(`  ${c.dim}Competitor pricing skipped (--no-pricing)${c.reset}`);
+      }
+    })(),
+  ]);
+
+  // ─── Wave 2: Authority presence — depends on pageSignals from Wave 1 ───
   // Off-page signals AI engines weight heavily. APIs are free public
   // endpoints with no auth — we run once per report and cache.
   if (!latest.authorityPresence && latest.brand && !args.noAuthority) {
@@ -2470,78 +2783,19 @@ async function cmdReport(args = {}) {
       });
       await persistSnapshot(latest);
       const ap = latest.authorityPresence;
-      const wiki = ap.wikipedia.found ? `${c.green}wiki✓${c.reset}` : `${c.yellow}wiki✗${c.reset}`;
-      const red = ap.reddit.found ? `${c.green}reddit✓${c.reset} (${ap.reddit.mentionCount})` : `${c.yellow}reddit✗${c.reset}`;
+      const wiki = ap.wikipedia.found ? `${c.green}wiki${SYM.ok}${c.reset}` : `${c.yellow}wiki${SYM.err}${c.reset}`;
+      const red = ap.reddit.found ? `${c.green}reddit${SYM.ok}${c.reset} (${ap.reddit.mentionCount})` : `${c.yellow}reddit${SYM.err}${c.reset}`;
       const gh = ap.github
-        ? (ap.github.found ? `${c.green}gh✓${c.reset}` : `${c.yellow}gh✗${c.reset}`)
+        ? (ap.github.found ? `${c.green}gh${SYM.ok}${c.reset}` : `${c.yellow}gh${SYM.err}${c.reset}`)
         : '';
       console.log(`  ${wiki} · ${red}${gh ? ' · ' + gh : ''}`);
     } catch (err) {
-      console.log(`  ${c.yellow}⚠ Authority check skipped: ${errMsg(err)}${c.reset}`);
+      console.log(`  ${c.yellow}${SYM.warn} Authority check skipped: ${errMsg(err)}${c.reset}`);
     }
   } else if (latest.authorityPresence) {
     console.log(`  ${c.dim}Authority presence loaded from cache${c.reset}`);
   } else if (args.noAuthority) {
     console.log(`  ${c.dim}Authority check skipped (--no-authority)${c.reset}`);
-  }
-
-  // ─── AI-bot crawlability audit (cached) ───
-  // Pure HTTP fetches, no LLM cost. Surfaces robots.txt blocks and missing
-  // /llms.txt / sitemap.xml — common root causes of "AI doesn't see me".
-  if (!latest.crawlability && latest.domain) {
-    console.log(`  ${c.dim}Auditing AI-bot crawlability for ${latest.domain}...${c.reset}`);
-    try {
-      latest.crawlability = await auditCrawlability(latest.domain);
-      await persistSnapshot(latest);
-      const s = latest.crawlability.summary;
-      const flag = s.blockedCount > 0 ? `${c.red}${s.blockedCount} bot${s.blockedCount !== 1 ? 's' : ''} blocked${c.reset}` : `${c.green}all bots OK${c.reset}`;
-      console.log(`  ${c.green}✓${c.reset} robots:${s.hasRobots ? '✓' : '✗'} llms.txt:${s.hasLlmsTxt ? '✓' : '✗'} sitemap:${s.hasSitemap ? '✓' : '✗'} — ${flag}`);
-    } catch (err) {
-      console.log(`  ${c.yellow}⚠ Crawlability audit skipped: ${errMsg(err)}${c.reset}`);
-    }
-  } else if (latest.crawlability) {
-    console.log(`  ${c.dim}Crawlability audit loaded from cache${c.reset}`);
-  }
-
-  // ─── v1.1: Entity graph (cross-platform sameAs reciprocity, cached) ───
-  // Reuses homepage HTML from pageSignals if available — avoids re-fetch.
-  if (!latest.entityGraph && latest.domain && !args.noEntityGraph) {
-    console.log(`  ${c.dim}Verifying cross-platform sameAs chain...${c.reset}`);
-    try {
-      latest.entityGraph = await checkEntityGraph(latest.domain);
-      await persistSnapshot(latest);
-      const eg = latest.entityGraph;
-      if (eg.ok) {
-        console.log(`  ${c.green}✓${c.reset} sameAs:${eg.sameAsCount} reciprocity:${eg.summary.reciprocityRate}%`);
-      } else {
-        console.log(`  ${c.yellow}⚠ Entity graph: ${eg.error || 'unavailable'}${c.reset}`);
-      }
-    } catch (err) {
-      console.log(`  ${c.yellow}⚠ Entity graph skipped: ${errMsg(err)}${c.reset}`);
-    }
-  } else if (latest.entityGraph) {
-    console.log(`  ${c.dim}Entity graph loaded from cache${c.reset}`);
-  } else if (args.noEntityGraph) {
-    console.log(`  ${c.dim}Entity graph skipped (--no-entity-graph)${c.reset}`);
-  }
-
-  // ─── v1.1: Competitor pricing tiers (cached, top-5) ───
-  // Heuristic only — no LLM cost. Uses citations from this run.
-  if (!latest.competitorPricing && Array.isArray(latest.topCompetitors) && latest.topCompetitors.length > 0 && !args.noPricing) {
-    console.log(`  ${c.dim}Classifying competitor pricing tiers (top-5)...${c.reset}`);
-    try {
-      const allCitations = (latest.results || []).flatMap(r => r.canonicalCitations || []);
-      latest.competitorPricing = await classifyCompetitorPricing(latest.topCompetitors, allCitations, { limit: 5 });
-      await persistSnapshot(latest);
-      const tiers = latest.competitorPricing.map(c => `${c.name}=${c.tier}`).join(' ');
-      console.log(`  ${c.green}✓${c.reset} ${tiers}`);
-    } catch (err) {
-      console.log(`  ${c.yellow}⚠ Competitor pricing skipped: ${errMsg(err)}${c.reset}`);
-    }
-  } else if (latest.competitorPricing) {
-    console.log(`  ${c.dim}Competitor pricing loaded from cache${c.reset}`);
-  } else if (args.noPricing) {
-    console.log(`  ${c.dim}Competitor pricing skipped (--no-pricing)${c.reset}`);
   }
 
   // ─── v1.1: Region context (per-engine geo signals, derived) ───
@@ -2551,10 +2805,10 @@ async function cmdReport(args = {}) {
     await persistSnapshot(latest);
     const rc = latest.regionContext.aggregate;
     if (rc.dominantRegion) {
-      console.log(`  ${c.green}✓${c.reset} dominant region: ${rc.dominantRegion} (${rc.confidence})`);
+      console.log(`  ${c.green}${SYM.ok}${c.reset} dominant region: ${rc.dominantRegion} (${rc.confidence})`);
     }
   } catch (err) {
-    console.log(`  ${c.yellow}⚠ Region context skipped: ${errMsg(err)}${c.reset}`);
+    console.log(`  ${c.yellow}${SYM.warn} Region context skipped: ${errMsg(err)}${c.reset}`);
   }
 
   // ─── v1.1: Response freshness (training cutoff inference, derived) ───
@@ -2563,9 +2817,9 @@ async function cmdReport(args = {}) {
     latest.responseFreshness = checkResponseFreshness(latest);
     await persistSnapshot(latest);
     const rf = latest.responseFreshness.aggregate;
-    console.log(`  ${c.green}✓${c.reset} freshness: ${rf.overall} (fresh:${rf.counts.fresh} stale:${rf.counts.stale} unknown:${rf.counts.unknown})`);
+    console.log(`  ${c.green}${SYM.ok}${c.reset} freshness: ${rf.overall} (fresh:${rf.counts.fresh} stale:${rf.counts.stale} unknown:${rf.counts.unknown})`);
   } catch (err) {
-    console.log(`  ${c.yellow}⚠ Response freshness skipped: ${errMsg(err)}${c.reset}`);
+    console.log(`  ${c.yellow}${SYM.warn} Response freshness skipped: ${errMsg(err)}${c.reset}`);
   }
 
   // ─── Outreach email templates for top-3 cited domains (cached) ───
@@ -2587,17 +2841,18 @@ async function cmdReport(args = {}) {
             providerName: providerKey,
             providerCall,
             apiKey: process.env[providerCfg.env],
-            model: CLASSIFY_MODELS[providerKey] || providerCfg.model,
+            // Outreach templates = structured generation; classify-tier is enough.
+            model: providerCfg.classifyModel || providerCfg.model,
           });
           if (templates.length > 0) {
             latest.outreachTemplates = templates;
             if (!latest.costByModel) latest.costByModel = [];
             if (costInfo) latest.costByModel.push(costInfo);
             await persistSnapshot(latest);
-            console.log(`  ${c.green}✓ ${templates.length} outreach template${templates.length !== 1 ? 's' : ''} generated${c.reset}`);
+            console.log(`  ${c.green}${SYM.ok} ${templates.length} outreach template${templates.length !== 1 ? 's' : ''} generated${c.reset}`);
           }
         } catch (err) {
-          console.log(`  ${c.yellow}⚠ Outreach templates skipped: ${errMsg(err)}${c.reset}`);
+          console.log(`  ${c.yellow}${SYM.warn} Outreach templates skipped: ${errMsg(err)}${c.reset}`);
         }
       }
     }
@@ -2695,10 +2950,15 @@ async function cmdReport(args = {}) {
   if (args.noOpen) {
     console.log(`${c.dim}(browser open skipped — pass without --no-open to open automatically)${c.reset}\n`);
   } else if (htmlOutPath) {
-    const { execSync } = await import('node:child_process');
-    const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-    execSync(`${opener} "${htmlOutPath}"`);
-    console.log(`${c.green}Opened in browser: ${htmlOutPath}${c.reset}\n`);
+    const { openInBrowser } = await import('../lib/util/open-browser.js');
+    const ok = await openInBrowser(htmlOutPath);
+    if (ok) {
+      console.log(`${c.green}Opened in browser: ${htmlOutPath}${c.reset}\n`);
+    } else {
+      // Headless Linux without xdg-open, sandboxed env, etc. Print the path
+      // so the user can open it themselves instead of staring at silence.
+      console.log(`${c.dim}(could not auto-open — open this file manually: ${htmlOutPath})${c.reset}\n`);
+    }
   } else {
     console.log(`${c.dim}(--no-html: only ${outPath} written; drop --no-html to open the bento HTML)${c.reset}\n`);
   }
@@ -2756,7 +3016,7 @@ async function cmdRunManual(argv) {
   try {
     extractionProvidersManual = await buildExtractionProviders(config.providers);
   } catch (err) {
-    console.error(`\n${c.red}✗ ${errMsg(err)}${c.reset}`);
+    console.error(`\n${c.red}${SYM.err} ${errMsg(err)}${c.reset}`);
     process.exit(1);
   }
   console.log(`${c.dim}  Extractor: ${extractionProvidersManual.primary.model} + ${extractionProvidersManual.secondary.model} (parallel)${c.reset}\n`);
@@ -2965,7 +3225,7 @@ async function cmdExport(args = {}) {
   if (args.output) {
     await writeFile(args.output, output);
     const rows = output.split('\n').length - 1;
-    console.log(`${c.green}✓ Exported ${snapshots.length} run${snapshots.length !== 1 ? 's' : ''} (${rows} rows) → ${args.output}${c.reset}`);
+    console.log(`${c.green}${SYM.ok} Exported ${snapshots.length} run${snapshots.length !== 1 ? 's' : ''} (${rows} rows) → ${args.output}${c.reset}`);
   } else {
     process.stdout.write(output);
   }
@@ -3008,7 +3268,7 @@ async function cmdCrawlStats(args = {}) {
 
   if (args.output) {
     await writeFile(args.output, JSON.stringify(stats, null, 2));
-    console.log(`\n${c.green}✓ Saved to ${args.output}${c.reset}`);
+    console.log(`\n${c.green}${SYM.ok} Saved to ${args.output}${c.reset}`);
   }
 }
 
@@ -3184,7 +3444,7 @@ ${c.bold}Query validation:${c.reset}
   cached in .aeo-tracker.json so run doesn't re-pay. If you hand-edit queries, run will
   auto-validate the new ones inline (shows cost). Known failure mode: "AEO consultants
   Poland" means customs in Poland, not Answer Engine Optimization — always expand acronyms.
-  ${c.bold}--force${c.reset}                Bypass validation gate (for research on cross-industry interpretation noise)
+  ${c.bold}--force${c.reset}                Bypass validation gate AND today's response cache (re-queries every cell)
   ${c.bold}--strict-validation${c.reset}    Cross-check query validation with 2 LLM providers (unanimous approve OR flag as split).
                          2× validation cost. Use when reliability > latency (e.g. CI pipelines).
   ${c.bold}--geo=us,uk,de${c.reset}         Run each query under multiple regional contexts (multiplies cost by region count).
@@ -3193,6 +3453,18 @@ ${c.bold}Query validation:${c.reset}
                          full — adds a training-data pass (no web search) where supported. Cost ~2×.
                          auto — defaults to web; prompts you if last training-data baseline is stale (>14 days).
                          Use full|auto to distinguish "absent from current SERPs" from "absent from training corpus".
+
+${c.bold}Per-run model overrides${c.reset} (no config rewrite — in-memory only):
+  ${c.bold}--openai-model=<id>${c.reset}     Override providers.openai.model for this run
+  ${c.bold}--gemini-model=<id>${c.reset}     Override providers.gemini.model
+  ${c.bold}--anthropic-model=<id>${c.reset}  Override providers.anthropic.model
+  ${c.bold}--perplexity-model=<id>${c.reset} Override providers.perplexity.model
+
+  When you hit rate limits, switch from a search-capable model (e.g. gpt-5-search-api,
+  6k TPM on OpenAI tier 1) to its base counterpart (gpt-5, 90k TPM). Tradeoff: no live
+  web search, only training-corpus signal. See --depth=full for both passes side-by-side.
+  --replay caveat: cached responses are filename-keyed by (query, provider, model). An
+  override that doesn't match the recorded model will miss cache and hit live API.
 
 ${c.bold}Exit codes (after run):${c.reset}
   0                        Score stable or improved
@@ -3210,6 +3482,8 @@ ${c.bold}Environment variables:${c.reset}
   ${c.bold}Debug${c.reset}:
     AEO_DEBUG=1              Print raw stack traces alongside actionable panels
                              (for bug reports — see github.com/webappski/aeo-platform/issues)
+    AEO_LOG_TOKENS=1         Log per-call token usage to stderr (calibrate rate-limit
+                             scheduler — pipe to "grep tokens" to see real numbers)
     NO_COLOR=1               Strip ANSI escape codes from output (auto-detected
                              on non-TTY; set explicitly in CI logs if you see garbage)
 
@@ -3277,6 +3551,13 @@ const { values, positionals } = parseArgs({
     // v0.7 — basket versioning (additive vs replace on --queries-only)
     'add-queries': { type: 'boolean', default: false },
     'replace-queries': { type: 'boolean', default: false },
+    // Per-run model overrides (in-memory only — config file not rewritten).
+    // Use to swap a search-capable model (low TPM on tier 1) for its base
+    // counterpart without re-running init or editing .aeo-tracker.json.
+    'openai-model':     { type: 'string' },
+    'gemini-model':     { type: 'string' },
+    'anthropic-model':  { type: 'string' },
+    'perplexity-model': { type: 'string' },
   },
   allowPositionals: true,
   strict: false,
@@ -3291,8 +3572,9 @@ const command = positionals[0];
 // (that's intentional — the command already handled its own exit).
 // Single prompter for every interactive prompt across init/run. Owned by
 // the dispatcher so the two commands don't create competing readlines on
-// the same stdin. close() registered via process.on('exit') inside the
-// module — no manual lifecycle handling needed below.
+// the same stdin. Lifecycle handled by process.on('exit') inside the
+// module — the dispatcher's process.exit(0|1) on every code path
+// guarantees that hook fires.
 const { createPrompter } = await import('../lib/util/prompt.js');
 const prompter = createPrompter({ nonInteractive: values.yes });
 
@@ -3318,6 +3600,11 @@ try {
       strictValidation: values['strict-validation'],
       geo: values.geo,
       depth: values.depth,                       // web | full | auto (default: web)
+      // Per-run model overrides — applied via applyCliModelOverrides()
+      openaiModel:     values['openai-model'],
+      geminiModel:     values['gemini-model'],
+      anthropicModel:  values['anthropic-model'],
+      perplexityModel: values['perplexity-model'],
       // Replay mode (see replay-mode block at top of file)
       replay: values.replay,
       replayFrom: values['replay-from'],
@@ -3349,6 +3636,13 @@ try {
     console.log(HELP);
     process.exit(1);
   }
+  // CLI is done. Force-terminate so we don't depend on perfect resource
+  // hygiene across lib/ — spinner setInterval, readline on stdin, undici
+  // keep-alive socket pool, anything a future contributor adds. Node
+  // flushes stdout/stderr synchronously on process.exit, and the 'exit'
+  // event fires synchronously which runs every registered hook (e.g.
+  // prompter.close in lib/util/prompt.js).
+  process.exit(0);
 } catch (err) {
   for (const line of formatUnexpectedErrorPanel({ err, command, useColor: USE_COLOR })) {
     console.error(line);
