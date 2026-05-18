@@ -148,7 +148,11 @@ await test('flags domain collision (apple for fruit company)', async () => {
   assert.equal(v.llmIssues.length, 1);
 });
 
-await test('low confidence below CONFIDENCE_THRESHOLD flags even if valid=true', async () => {
+await test('1.0.8: low confidence does NOT flag when valid=true (trust LLM verdict)', async () => {
+  // 1.0.8 changed run-validation.js:186 from `!valid || confidence < threshold`
+  // to just `!valid`. Real commercial queries routinely score 0.55-0.70 because
+  // LLM accounts for alternate meanings; jejтогда жёсткий порог отвергал
+  // нормальные запросы. Confidence stays in cache for audit only.
   const primary = makeMockProvider({
     'CRM for small teams': { valid: true, confidence: 0.55 },
   });
@@ -157,7 +161,10 @@ await test('low confidence below CONFIDENCE_THRESHOLD flags even if valid=true',
     brand: 'Brand', domain: 'brand.com', category: 'CRM software',
     primary,
   });
-  assert.equal(v.llmIssues.length, 1, `confidence 0.55 < ${CONFIDENCE_THRESHOLD} must flag`);
+  assert.equal(v.llmIssues.length, 0,
+    'valid:true must accept regardless of confidence (1.0.8 trust-valid rule)');
+  // Confidence still present in cache for downstream audit / display.
+  assert.equal(v.updatedCache[0].confidence, 0.55);
 });
 
 await test('commercial-only default: parametric-only query blocked as informational', async () => {

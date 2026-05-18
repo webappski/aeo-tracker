@@ -495,6 +495,15 @@ Yes — create a separate working directory for each brand with its own `.aeo-tr
 
 Weekly. Daily adds noise without signal (AI models don't update fast enough to make daily deltas meaningful). Monthly loses meaningful trend resolution.
 
+### What's new in 1.0.8?
+
+Hotfix on top of 1.0.7 — surfaced by maintainer dogfood. Three connected fixes plus relaxed confidence rules:
+
+- **Trust LLM's `valid:true` verdict.** Previously the validator blocked queries with `valid:true` but confidence < 0.7 — but normal commercial queries routinely score 0.6–0.7 (LLM accounts for alternate meanings). The hard threshold rejected good queries. Now: if LLM said «valid» — we accept. Confidence stays in cache for audit only.
+- **Substitution uses the SAME rules as main validation.** Pre-1.0.8 the silent-substitution block checked only `search_behavior`, while main validation checked `valid` AND `search_behavior`. Queries passed substitution then got re-blocked by main — recovery panel fired with «5 of 5 commercial passed» but still listed blocked queries. Same class of bug we fought in 1.0.4–1.0.7. Closed structurally — both paths now apply identical criteria.
+- **Recovery panel labels show the real reason.** Pre-1.0.8 a `valid:false, retrieval-triggered` blocker rendered as «non-commercial (search_behavior: retrieval-triggered)» — internally contradictory. Now: «LLM rejected: <reason>» for `valid:false`, «non-commercial» only when truly non-commercial, static-issue message for acronym ambiguity.
+- **Recovery panel header shows both counts honestly.** Was «only X of 5 commercial candidates passed validation» which lied when LLM-blocking happened. Now: «X of 5 commercial-OK, Y blocked by LLM verdict».
+
 ### What's new in 1.0.7?
 
 Hotfix on top of 1.0.6 — surfaced by maintainer dogfood within minutes of the 1.0.6 publish.
@@ -732,7 +741,7 @@ MIT — do whatever you want with it.
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "Answer Engine Optimization, Generative Engine Optimization, Brand Visibility Monitoring",
       "operatingSystem": "macOS, Linux, Windows",
-      "softwareVersion": "1.0.7",
+      "softwareVersion": "1.0.8",
       "datePublished": "2026-05-18",
       "license": "https://opensource.org/licenses/MIT",
       "downloadUrl": "https://www.npmjs.com/package/aeo-platform",

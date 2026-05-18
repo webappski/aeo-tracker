@@ -812,11 +812,15 @@ async function cmdInit(opts = {}) {
               c.confidence = verdict.confidence;
             }
           }
-          const PASS = (c) =>
-            c.search_behavior === SEARCH_BEHAVIORS.RETRIEVAL
-            // No verdict-array entry → graceful pass-through. "Verdict
-            // present but search_behavior null" correctly rejected.
-            || (!verdictsQOnly.find(v => v.query === c.text));
+          // 1.0.8: same rules as main validation (run-validation.js:186 + :194).
+          // valid === true AND retrieval-triggered. Legacy cache without `valid`
+          // field fails closed. See main path for full rationale.
+          const PASS = (c) => {
+            const verdict = verdictsQOnly.find(v => v.query === c.text);
+            if (!verdict) return true;  // graceful: no verdict → pass through
+            return verdict.valid === true
+                && verdict.search_behavior === SEARCH_BEHAVIORS.RETRIEVAL;
+          };
           const passing = allFiveQOnly.filter(PASS);
           commercialPassingCountQOnly = passing.length;
           if (commercialPassingCountQOnly >= 3) {
@@ -1358,14 +1362,27 @@ async function cmdInit(opts = {}) {
                         c.confidence = verdict.confidence;
                       }
                     }
-                    // Silent substitution split.
-                    const PASS = (c) =>
-                      c.search_behavior === SEARCH_BEHAVIORS.RETRIEVAL
-                      // No verdict-array entry at all for this query (validator
-                      // didn't return data for it) → graceful pass-through. Does
-                      // NOT cover "verdict exists but search_behavior is null/
-                      // undefined" — that's correctly rejected as non-commercial.
-                      || (!verdicts.find(v => v.query === c.text));
+                    // 1.0.8 silent-substitution PASS — must use the SAME rules
+                    // as main validation (run-validation.js:186 + :194). Earlier
+                    // versions checked only search_behavior, which allowed
+                    // valid:false queries through substitution; main validation
+                    // then rejected them, breaking the contract.
+                    //
+                    // Rules now in lockstep:
+                    //   - main llmIssues filter: !valid → block
+                    //   - main informationalIssues filter: search_behavior !== RETRIEVAL → block
+                    //   - substitution PASS: NOT in either filter
+                    //
+                    // Legacy graceful: if no verdict entry exists (cache miss),
+                    // pass through — same as 1.0.7 behaviour. If verdict exists
+                    // but lacks `valid` (legacy pre-1.0.8 cache shape), fail
+                    // closed — `verdict.valid === true` is false for undefined.
+                    const PASS = (c) => {
+                      const verdict = verdicts.find(v => v.query === c.text);
+                      if (!verdict) return true;  // graceful: no verdict → pass through
+                      return verdict.valid === true
+                          && verdict.search_behavior === SEARCH_BEHAVIORS.RETRIEVAL;
+                    };
                     const passing = allFive.filter(PASS);
                     commercialPassingCount = passing.length;
                     if (commercialPassingCount >= 3) {

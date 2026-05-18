@@ -233,6 +233,13 @@ on major-version mismatch.
 
 ## Done
 
+### 1.0.8 — published 2026-05-18
+
+- `[bug · P0]` **Substitution and main validation now apply identical rules.** The recurring 1.0.4–1.0.7 bug class structurally fixed.
+- `[bug · P0]` **Trust `valid:true` — confidence threshold no longer blocks.** Real commercial queries (confidence 0.6–0.7) are no longer rejected. Confidence stays in cache for audit.
+- `[ux]` **Recovery panel labels show real reason** (`LLM rejected: ...` vs `non-commercial`). 1.0.7's «non-commercial (retrieval-triggered)» contradiction fixed.
+- `[ux]` **Recovery panel header shows both counts** («N commercial-OK, M LLM-rejected»). 1.0.7's «5 of 5 passed yet panel fires» math lie fixed.
+
 ### 1.0.7 — published 2026-05-18
 
 - `[bug · P0]` **`gpt-5-search-api` no longer fails every OpenAI cell.** Caught by maintainer dogfood within minutes of 1.0.6 publish. `SUPPORTS_REASONING_EFFORT` whitelist excluded gen 0-4 but passed ALL `gpt-5*` including search-variants; OpenAI rejected `reasoning_effort` with HTTP 400 on every call. Whitelist now hard-excludes any model ID containing `search`.

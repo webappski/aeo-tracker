@@ -2,6 +2,28 @@
 
 All notable changes to `aeo-platform` (formerly `@webappski/aeo-tracker`).
 
+## [1.0.8] — 2026-05-18
+
+**Validator honesty part 2.** 1.0.7 dogfood revealed three connected contradictions in a single recovery-panel render: header claimed «5 of 5 commercial candidates passed», yet recovery fired anyway with blocked queries labelled «non-commercial (search_behavior: retrieval-triggered)» — a contradiction in one line, because retrieval-triggered IS commercial. Real reason was a confidence-threshold gate that rejected `valid:true` queries with confidence < 0.7. This is the same class of bug we fought in 1.0.4 → 1.0.5 → 1.0.6 → 1.0.7: substitution block and main validation using different rules. Closed structurally.
+
+### Fixed
+
+- **Trust `valid:true` LLM verdict; remove confidence-threshold blocking.** `lib/init/research/run-validation.js:186` changed from `!valid || confidence < CONFIDENCE_THRESHOLD` to `!valid`. Real commercial queries routinely score 0.6–0.7 (LLM accounts for alternate meanings); hard threshold rejected good queries. `CONFIDENCE_THRESHOLD` remains defined for prompt guidance + cache audit, no longer applied as a block rule.
+- **Substitution uses the SAME rules as main validation.** `bin/aeo-tracker.js` substitution PASS in both main path (~1362) and queries-only path (~817) now checks `verdict.valid === true && verdict.search_behavior === RETRIEVAL`. Pre-1.0.8 only `search_behavior` was checked, allowing `valid:false` queries to slip past substitution and get rejected by main validation downstream. Same-class regression closed across 1.0.4 → 1.0.7 finally fixed structurally.
+- **Recovery panel label shows the REAL block reason.** `lib/init/validator-recovery.js` now branches: `valid:false` → «LLM rejected: <reason>», `search_behavior !== retrieval` → «non-commercial», static `message` → message verbatim, else → fallback. Order matters: `valid:false` wins over `search_behavior` (1.0.7 had reverse order, producing the «non-commercial (retrieval-triggered)» contradiction).
+- **Recovery panel header shows both counts honestly.** «X of 5 commercial-OK, Y blocked by LLM verdict» when `commercialPassingCount` threaded from cmdInit. Legacy fallback («N query/queries blocked by validator») for paths that don't have the count (e.g. `--keywords` mode).
+
+### Added
+
+- `test/recovery-honest-reason.test.js` (7 cases) — explicit regression guard for the 1.0.7 «non-commercial (retrieval-triggered)» contradiction. Covers `valid:false`, parametric, mixed, static-issue, and the defensive fallback.
+- `test/recovery-honest-header.test.js` (5 cases) — header text honesty: both counts shown, legacy fallback, 1.0.7 regression guard.
+- `test/silent-substitute.test.js` extended (Cases 6–7) — `valid:false + retrieval` correctly FAILS substitution; `valid:true + low confidence` PASSES (trust-valid rule).
+
+### Internal
+
+- Plan went through REV 1 (APPROVED WITH NITS — 4 minor): dead-branch removal in header, fail-closed comment for missing `valid` field in legacy cache, mirror-rules update in test scaffold, CHANGELOG documentation.
+- cli-walkthrough skill probe added (mental): substitution and main validation MUST apply identical criteria. The whole 1.0.4–1.0.7 saga was this single class of bug.
+
 ## [1.0.7] — 2026-05-18
 
 **OpenAI search-variant hotfix + live-rows UX clarity.** 1.0.6 cannot complete a single `run` with `gpt-5-search-api` (the default OpenAI model) — every cell fails with HTTP 400 "Unrecognized request argument supplied: reasoning_effort". Plus operators have no signal of what `firing` / `60s pacing` means or how to abort.
