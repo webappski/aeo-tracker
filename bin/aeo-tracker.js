@@ -550,6 +550,7 @@ async function runValidationWithRecovery({
   primary, secondary = null, validationCache = [],
   nonInteractive = false, force = false, strictValidation = false,
   ask, useColor = true,
+  commercialPassingCount = null,  // 1.0.6: threaded from cmdInit substitution block
 }) {
   const v = await runValidationFlow({
     queries, brand, domain, category, geography,
@@ -575,13 +576,15 @@ async function runValidationWithRecovery({
 
   const printPanel = (allBlockers) => {
     // 1.0.4 Fix A: candidatePool entries arrive already enriched with
-    // search_behavior from the init-time pool-validation pass — no runtime
-    // enrichment needed here. (REV 2 had an enrichment block here against
-    // v.updatedCache, but that cache only ever contains the 3 config queries
-    // — the join produced zero matches in production. Removed in REV 4.)
+    // search_behavior. 1.0.6: also pass commercialPassingCount for the
+    // honest "X of 5 commercial candidates" header — when present (from
+    // cmdInit substitution block), recovery panel uses it; when undefined
+    // (legacy callers / --keywords mode), recovery panel falls back to
+    // the existing wording.
     const lines = formatRecoveryPanel({
       allBlockers, candidatePool, currentQueries: queries,
       brand, domain, category, useColor,
+      commercialPassingCount,
     });
     for (const ln of lines) console.log(ln);
   };
@@ -777,16 +780,20 @@ async function cmdInit(opts = {}) {
       const selectResult = selectTopThree(researchResult.candidates, { validationSkipped: !validator });
       console.log(`\n${c.dim}  pipeline cost ~$${researchResult.trace.estimatedCostUsd.toFixed(4)}${c.reset}\n`);
 
-      // 1.0.4 Fix A.1e — same pool-validation pass as main cmdInit. Uses
-      // existing.validationCache to honour cache hits for queries the user
-      // has seen before in earlier --queries-only runs.
+      // 1.0.6 — commercial-only over-generate + silent substitution
+      // (symmetric with main cmdInit; uses existing.validationCache for hits).
       const primaryQOnly = primary;
-      const poolAltsQOnly = selectResult.alternatives.slice(0, 5);
-      if (poolAltsQOnly.length > 0 && primaryQOnly?.providerCall) {
+      const allFiveQOnly = [
+        ...selectResult.selected.map(s => s.candidate),
+        ...selectResult.alternatives,
+      ];
+      let commercialPassingCountQOnly = null;
+      if (allFiveQOnly.length >= 3 && primaryQOnly?.providerCall) {
         try {
-          const { runTwoStageValidation } = await import('../lib/init/research/run-validation.js');
-          const poolValidationQOnly = await runTwoStageValidation({
-            queries: poolAltsQOnly.map(a => a.text),
+          const { runTwoStageValidation, SEARCH_BEHAVIORS } =
+            await import('../lib/init/research/run-validation.js');
+          const validationQOnly = await runTwoStageValidation({
+            queries: allFiveQOnly.map(c => c.text),
             brand, domain: existingDomain, category: categoryDescription,
             geography: geoTags || [],
             primary: primaryQOnly,
@@ -794,44 +801,38 @@ async function cmdInit(opts = {}) {
             validationCache: existing.validationCache || [],
             commercialOnly: false,
           });
-          const verdictsQOnly = poolValidationQOnly.updatedCache || [];
-          for (const a of poolAltsQOnly) {
-            const verdict = verdictsQOnly.find(v => v.query === a.text);
+          const verdictsQOnly = validationQOnly.updatedCache || [];
+          if (verdictsQOnly.length === 0) {
+            throw new Error('Validation returned no verdicts');
+          }
+          for (const c of allFiveQOnly) {
+            const verdict = verdictsQOnly.find(v => v.query === c.text);
             if (verdict) {
-              a.search_behavior = verdict.search_behavior;
-              a.confidence = verdict.confidence;
+              c.search_behavior = verdict.search_behavior;
+              c.confidence = verdict.confidence;
             }
           }
-        } catch (err) {
-          console.error(`${c.yellow}  Pool validation skipped: ${errMsg(err)}${c.reset}`);
-        }
-      }
-
-      // 1.0.4 pool-topup — symmetric with main cmdInit. Uses
-      // existing.validationCache for cache hits.
-      const retrievalCountQOnly = poolAltsQOnly.filter(a =>
-        a.search_behavior === 'retrieval-triggered'
-      ).length;
-      if (retrievalCountQOnly < 3 && primaryQOnly?.providerCall) {
-        const { topUpPool } = await import('../lib/init/research/pool-topup.js');
-        const topUpsQOnly = await topUpPool({
-          needed: 3 - retrievalCountQOnly,
-          brand, domain: existingDomain, category: categoryDescription,
-          site, primary: primaryQOnly,
-          audienceTags, geoTags,
-          validationCache: existing.validationCache || [],
-        });
-        if (topUpsQOnly.length > 0) {
-          const existingTextsQOnly = new Set([
-            ...selectResult.selected.map(s => s.candidate.text),
-            ...selectResult.alternatives.map(a => a.text),
-          ]);
-          const freshQOnly = topUpsQOnly.filter(t => !existingTextsQOnly.has(t.text));
-          if (freshQOnly.length > 0) {
-            selectResult.alternatives = [...selectResult.alternatives, ...freshQOnly];
+          const PASS = (c) =>
+            c.search_behavior === SEARCH_BEHAVIORS.RETRIEVAL
+            // No verdict-array entry → graceful pass-through. "Verdict
+            // present but search_behavior null" correctly rejected.
+            || (!verdictsQOnly.find(v => v.query === c.text));
+          const passing = allFiveQOnly.filter(PASS);
+          commercialPassingCountQOnly = passing.length;
+          if (commercialPassingCountQOnly >= 3) {
+            passing.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+            selectResult.selected = passing.slice(0, 3).map(c => ({
+              intent: c.intent || 'commercial',
+              candidate: c,
+              fallbackUsed: null,
+            }));
+            selectResult.alternatives = passing.slice(3).map(c => ({ ...c }));
           }
+        } catch (err) {
+          console.error(`${c.yellow}  Validation skipped: ${errMsg(err)}${c.reset}`);
         }
       }
+      selectResult.commercialPassingCount = commercialPassingCountQOnly;
 
       for (const line of formatSelection(selectResult)) console.log(line);
 
@@ -1175,6 +1176,10 @@ async function cmdInit(opts = {}) {
   // stays empty in manual / --keywords / single-shot modes — recovery falls
   // back to highest-score ranking when intents are unknown.
   let config_queryIntents = [];
+  // 1.0.6: count of commercial candidates passing both validator stages.
+  // Set inside the silent-substitution block; threaded into recovery panel
+  // so the "X of 5 commercial candidates" header is honest.
+  let config_commercialPassingCount = null;
 
   // P2: BYO keywords (`--keywords="q1,q2,q3"`) — skip brainstorm entirely, $0 LLM cost
   if (opts.keywords) {
@@ -1313,74 +1318,77 @@ async function cmdInit(opts = {}) {
 
                 console.log(`\n${c.dim}  pipeline complete in ${elapsed}ms, est cost ~$${researchResult.trace.estimatedCostUsd.toFixed(4)}${c.reset}\n`);
 
-                // 1.0.4 Fix A — validate the 5 pool alternatives through both
-                // validator stages (industry-fit + commercial-only) NOW, before
-                // formatSelection renders the (validated) label. Without this,
-                // the alts carry only category-validation status (`unverified`),
-                // and the recovery panel's --keywords suggestions get re-rejected
-                // by commercial-only on the next run. ~1 batched LLM call.
-                // Single-provider mode is supported (secondary: null).
-                const primaryForPoolValidation = researchProviders[0];
-                const poolAlts = selectResult.alternatives.slice(0, 5);
-                if (poolAlts.length > 0 && primaryForPoolValidation?.providerCall) {
+                // 1.0.6 — commercial-only over-generate + silent substitution.
+                // Replaces 1.0.4 Fix A (pool validation) + 1.0.5 top-up. With
+                // brainstorm now producing only 5 commercial candidates (3 needed
+                // + 2 spares), we validate all 5 through both stages here and
+                // silently substitute failing top-3 with passing spares. User
+                // sees ONLY the final 3 — no recovery panel for the common case.
+                const primaryForValidation = researchProviders[0];
+                const allFive = [
+                  ...selectResult.selected.map(s => s.candidate),
+                  ...selectResult.alternatives,
+                ];
+                let commercialPassingCount = null;
+                if (allFive.length >= 3 && primaryForValidation?.providerCall) {
                   try {
-                    const { runTwoStageValidation } = await import('../lib/init/research/run-validation.js');
-                    const poolValidation = await runTwoStageValidation({
-                      queries: poolAlts.map(a => a.text),
+                    const { runTwoStageValidation, SEARCH_BEHAVIORS } =
+                      await import('../lib/init/research/run-validation.js');
+                    const validation = await runTwoStageValidation({
+                      queries: allFive.map(c => c.text),
                       brand, domain, category: categoryDescription,
                       geography: geoTags || [],
-                      primary: primaryForPoolValidation,
+                      primary: primaryForValidation,
                       secondary: null,
                       validationCache: [],
                       commercialOnly: false,
                     });
-                    const verdicts = poolValidation.updatedCache || [];
-                    for (const a of poolAlts) {
-                      const verdict = verdicts.find(v => v.query === a.text);
+                    const verdicts = validation.updatedCache || [];
+                    if (verdicts.length === 0) {
+                      // Empty verdicts (validator returned nothing without throwing
+                      // — e.g. throttled). Treat as skipped to avoid silently
+                      // accepting un-validated queries.
+                      throw new Error('Validation returned no verdicts');
+                    }
+                    // Attach search_behavior on each candidate.
+                    for (const c of allFive) {
+                      const verdict = verdicts.find(v => v.query === c.text);
                       if (verdict) {
-                        a.search_behavior = verdict.search_behavior;
-                        a.confidence = verdict.confidence;
+                        c.search_behavior = verdict.search_behavior;
+                        c.confidence = verdict.confidence;
                       }
                     }
-                  } catch (err) {
-                    console.error(`${c.yellow}  Pool validation skipped: ${errMsg(err)}${c.reset}`);
-                  }
-                }
-
-                // 1.0.4 pool-topup — if Fix A's filter left <3 RETRIEVAL
-                // alternatives, autonomously generate the missing queries via
-                // a dedicated LLM call. Keeps the recovery panel's option-1
-                // --keywords command honest (must contain exactly 3 queries).
-                // Caught by cli-walkthrough skill for cells D and F before
-                // 1.0.4 was even published to npm.
-                const retrievalCount = poolAlts.filter(a =>
-                  a.search_behavior === 'retrieval-triggered'
-                ).length;
-                if (retrievalCount < 3 && primaryForPoolValidation?.providerCall) {
-                  const { topUpPool } = await import('../lib/init/research/pool-topup.js');
-                  const topUps = await topUpPool({
-                    needed: 3 - retrievalCount,
-                    brand, domain, category: categoryDescription,
-                    site, primary: primaryForPoolValidation,
-                    audienceTags, geoTags,
-                    validationCache: [],
-                  });
-                  if (topUps.length > 0) {
-                    // Dedup against selected + alternatives so a regenerated
-                    // duplicate doesn't appear twice in the pool.
-                    const existingTexts = new Set([
-                      ...selectResult.selected.map(s => s.candidate.text),
-                      ...selectResult.alternatives.map(a => a.text),
-                    ]);
-                    const fresh = topUps.filter(t => !existingTexts.has(t.text));
-                    if (fresh.length > 0) {
-                      selectResult.alternatives = [...selectResult.alternatives, ...fresh];
+                    // Silent substitution split.
+                    const PASS = (c) =>
+                      c.search_behavior === SEARCH_BEHAVIORS.RETRIEVAL
+                      // No verdict-array entry at all for this query (validator
+                      // didn't return data for it) → graceful pass-through. Does
+                      // NOT cover "verdict exists but search_behavior is null/
+                      // undefined" — that's correctly rejected as non-commercial.
+                      || (!verdicts.find(v => v.query === c.text));
+                    const passing = allFive.filter(PASS);
+                    commercialPassingCount = passing.length;
+                    if (commercialPassingCount >= 3) {
+                      // Happy path — re-sort passing by score, take top-3.
+                      passing.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+                      selectResult.selected = passing.slice(0, 3).map(c => ({
+                        intent: c.intent || 'commercial',
+                        candidate: c,
+                        fallbackUsed: null,
+                      }));
+                      selectResult.alternatives = passing.slice(3).map(c => ({ ...c }));
                     }
+                    // ELSE <3 passing: leave selectResult as-is; recovery panel
+                    // will fire downstream with the honest "X of 5" message.
+                  } catch (err) {
+                    console.error(`${c.yellow}  Validation skipped: ${errMsg(err)}${c.reset}`);
                   }
                 }
+                selectResult.commercialPassingCount = commercialPassingCount;
+                config_commercialPassingCount = commercialPassingCount;
 
-                // Display selected + alternatives — formatSelection now sees
-                // the enriched alts and renders (validated) honestly.
+                // Display selected + alternatives — formatSelection sees the
+                // post-substitution result. All commercial intent.
                 for (const line of formatSelection(selectResult)) console.log(line);
 
                 const accept = (nonInteractive ? 'y' : (await ask(`\nAccept selected queries? [Y]es / [e]dit / [n]o: `, 'y'))).trim();
@@ -1539,6 +1547,7 @@ async function cmdInit(opts = {}) {
     force: opts.force,
     strictValidation: opts.strictValidation,
     ask, useColor: !!c.red,
+    commercialPassingCount: config_commercialPassingCount,  // 1.0.6
   });
   if (recovery.recoveryFailed) {
     // Panel already printed. Exit with code 1 — validation failed, user has

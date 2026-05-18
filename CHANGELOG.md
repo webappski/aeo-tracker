@@ -2,6 +2,36 @@
 
 All notable changes to `aeo-platform` (formerly `@webappski/aeo-tracker`).
 
+## [1.0.6] — 2026-05-18
+
+**Commercial-only pipeline with silent substitution.** Retires the 4-bucket query generation (commercial / problem / vertical / comparison) in favour of a focused commercial-only pipeline that over-generates (5 candidates for 3 slots), validates all 5 at init time, and silently substitutes failing queries with passing spares. The recovery panel fires ONLY when fewer than 3 of 5 commercial candidates survive validation — the genuine impossibility case. Closes the entire trust-failure class that recurred from 1.0.2 through 1.0.5 (recovery panel suggesting commands that the CLI itself rejected): the upstream cause (mixed-intent queries blocked by the downstream commercial-only validator) is removed rather than patched around.
+
+### Fixed
+
+- **Recovery panel no longer suggests rejected commands.** The dogfood failure mode from 1.0.5 (`voice form widget versus conversational form builder` rendered as `(validated)` by Fix A, then re-blocked as `search_behavior: mixed` when copied into `--keywords`) is now impossible by construction: every query in the pool is commercial-intent by design, and all 5 are validated at init through both validator stages. The substitution block silently swaps any top-3 failure with the highest-score passing spare. Operator sees only the final 3 commercial queries; recovery panel is the genuine last resort.
+
+### Changed (architecture)
+
+- **`lib/init/research/brainstorm.js`** — `INTENT_BUCKETS = ['commercial']` (was the 4-bucket model). Brainstorm prompt rewritten to ask for 5 commercial vendor-listing queries in one LLM call. Output shape preserves `buckets.problem/vertical/comparison` as empty arrays for backward-compatibility with consumers that destructure by bucket name. `TARGET_TOTAL_MIN = 5` (was implicit 10).
+- **`lib/init/research/select.js`** — `selectTopThree` now picks top-3 by score from the validated commercial pool. Dropped `REQUIRED_INTENTS`, `FALLBACK_CHAIN`, `verticalDominance` (intent-diversity logic was vacuous with all-commercial input).
+- **`lib/init/research/research.js:94`** — filter threshold lowered from `< 6` to `< 3` (5-candidate brainstorm output, not the legacy 20-candidate). Removed `checkVerticalDiversity` call (emitted spurious warning when `vertical` no longer in `INTENT_BUCKETS`).
+- **`bin/aeo-tracker.js::cmdInit`** — replaced 1.0.4 Fix A pool-validation + 1.0.5 top-up with a single silent-substitution block that validates all 5 candidates through both stages, splits passing/failing, and swaps top-3 failures with passing spares. Same logic mirrored in the `--queries-only` branch.
+- **`lib/init/validator-recovery.js`** — recovery panel header now reads "Cannot auto-recover — only X of 5 commercial candidates passed validation" when `commercialPassingCount` is threaded from cmdInit. Legacy wording when the param is absent (`--keywords` mode).
+
+### Removed
+
+- **`lib/init/research/pool-topup.js`** — 1.0.5 top-up module made obsolete by over-generation. Deleted along with `test/pool-topup.test.js` and the `test:pool-topup` script.
+
+### Added
+
+- **`test/brainstorm-commercial-only.test.js`** (9 cases) — negative-regression guard asserting `INTENT_BUCKETS === ['commercial']`, `flat.every(c => c.intent === 'commercial')`, prompt asks for commercial only, and output preserves empty non-commercial buckets for backward-compat.
+- **`test/silent-substitute.test.js`** (5 cases) — exercises substitution logic: all 5 pass → unchanged, 1 fails → swap with first spare, 2 fail → swap both, 3 fail → no substitution (recovery panel fires), empty verdicts → graceful degrade.
+
+### Internal
+
+- Architectural rule saved as `memory/project_commercial_only_over_generate.md`: AEO query archetypes are commercial-intent category-based queries, exclusively. Generates 5 (3 needed + 2 spares), validates all, silent-substitutes from spares, surfaces recovery panel only on genuine impossibility (<3 of 5 pass).
+- Plan at `docs/plans/1.0.6-commercial-only-over-generate.md` went through REV 1 (REVISION NEEDED — 9 architect remarks incl. 2 BLOCKERs: `research.js:94` threshold would always throw, recovery header formula was math-wrong) and REV 2 (APPROVED WITH NITS). Implementation passed Step 4 architect review.
+
 ## [1.0.5] — 2026-05-18
 
 **Pool top-up follow-up to 1.0.4.** Validator-honesty contract is now defended at TWO layers (in addition to the 1.0.4 mutation in `formatSelection`): top-up generation in `cmdInit` and a safety net in `formatRecoveryPanel`.

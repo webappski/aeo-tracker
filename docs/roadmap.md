@@ -189,6 +189,59 @@ Reviewer Anna's secondary observation: when a user copy-pastes the README quicks
 
 ## Done
 
+## 1.0.7 — next patch (queued from adversarial cli-walkthrough Pass 4)
+
+Eleven pre-existing latent issues surfaced by the full-scope adversarial probe sweep
+on 1.0.6. None are 1.0.6 regressions — they are gaps in older code revealed by the
+expanded "what if" question bank. Top-3 by user-visible value:
+
+### [bug] `cmdRun` doesn't validate "exactly 3 queries" on hand-edited config
+
+If a user hand-edits `.aeo-tracker.json::queries` to fewer or more than 3 entries,
+`cmdRun` accepts it and downstream behaviour is undefined. Add an explicit guard
+at `bin/aeo-tracker.js::cmdRun` after config load: `if (queries.length !== 3) throw`
+with copy-paste fix.
+
+### [bug] `--keywords` cannot contain a literal comma inside a query
+
+`String(opts.keywords).split(',')` is naive — `--keywords="q1, with comma,q2,q3"`
+silently splits into 4 parts and fails the count gate with an opaque error.
+Document the limitation in `--help` and improve the error message; consider
+supporting shell-escape (`q1,\,with\,comma,q2,q3`) or backslash-escape.
+
+### [bug] `--replay` has no snapshot schema-version check
+
+Snapshots from 1.0.4 or earlier have a different cached-response shape. `_tryReplay`
+extracts via hard-coded provider shape; if shape changed (e.g. `raw.choices[0].message`
+moved), extract returns empty `{text:'', citations:[]}` and pipeline continues with
+`mention='no'` for every cell — silent-corruption indistinguishable from real
+zero-visibility run. Stamp snapshots with `aeoPlatformVersion` and refuse replay
+on major-version mismatch.
+
+### Other 8 WARN items (lower priority)
+
+- `[chore]` no `npm pack && npm view dependencies` postpublish gate to assert zero-deps invariant
+- `[bug]` `init --auto` tmp-file race: `CONFIG_FILE + '.tmp'` is a fixed path; parallel inits clobber. Use the same pid+ms+random suffix `persistSnapshot` already uses
+- `[bug]` `run-manual` has no size cap on `qN.txt` — 5MB+ files read fully into memory; no content-type check (binary garbage decoded as UTF-8 silently)
+- `[ux]` `diff` between snapshots with different `queries` arrays shows Lost+Gained without flagging "basket changed" — operator can misread as a real regression
+- `[bug]` `--replay-from=tomorrow` (future date) gives a raw error, not a clear "future date" message
+- `[ux]` heuristic-key match doesn't tell the user when a `*_DEV` key was shadowed by the standard name — operator can't tell which key was active
+- `[ux]` `init --auto` doesn't warn if both `OPENAI_API_KEY` and `OPENAI_API_KEY_OLD` are set
+- `[chore]` `crawl-stats` Windows-path quoting unverified on darwin CI; needs Windows runner
+
+---
+
+## Done
+
+### 1.0.6 — published 2026-05-18
+
+- `[bug · P0]` **Recovery panel no longer suggests rejected commands.** Retires 4-bucket query generation (vertical/problem/comparison queries reliably failed the commercial-only validator). New pipeline generates 5 commercial-only candidates, validates all 5, silently substitutes failures with spares. Recovery panel fires only when <3 of 5 survive.
+- `[bug · P0]` **Adversarial walkthrough caught `research-failure-panel.js:88`** suggesting `--keywords="q1,q2,q3,q4,q5"` (5 entries, CLI gate rejects ≠3). Fixed to exactly 3. Pre-existing trust-failure from before 1.0.4, surfaced only when Pass 2 of the updated cli-walkthrough skill ran the output→input feedback loop against all panels (not just validator-recovery).
+- `[skill]` `cli-walkthrough` skill expanded with mandatory adversarial probes (A–G), output→input feedback loop, and per-stage "what if" question bank. The skill's value proven on first run: Pass 1 (hypothesis-driven) said APPROVED zero FAIL; Pass 2 (adversarial) found the FAIL Pass 1 missed.
+- `[architecture]` Dropped REQUIRED_INTENTS / FALLBACK_CHAIN / verticalDominance from `select.js` (intent-diversity logic was vacuous with all-commercial input). Lowered `research.js:94` filter threshold from `< 6` to `< 3`. Removed `checkVerticalDiversity` call (spurious warning).
+- `[cleanup]` Deleted `lib/init/research/pool-topup.js` + `test/pool-topup.test.js` (1.0.5 top-up made obsolete by over-generation).
+- `[skill]` Memory rule `memory/project_commercial_only_over_generate.md` codifies the architectural decision.
+
 ### 1.0.5 — published 2026-05-18
 
 - `[bug · P0]` Pool top-up — when initial pool validation leaves <3 RETRIEVAL queries (cells D pool=1+unclean and F pool=2+unclean), tool autonomously generates missing queries via dedicated LLM call. Caught by newly-created `cli-walkthrough` skill before 1.0.4-internal reached npm; shipped as 1.0.5.
