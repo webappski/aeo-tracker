@@ -48,6 +48,15 @@ aeo-platform init --yes --brand=YOURBRAND --domain=YOURDOMAIN.COM --auto && aeo-
 
 > Note: `&&` chain works in CMD and PowerShell 7+, but **not in PowerShell 5.1** (the default Windows 10/11 shell — check via `$PSVersionTable.PSVersion`). For persistent env vars across sessions on Windows, see the [Full quickstart](#full-quickstart-for-first-time-terminal-users) below. Git Bash and WSL users — the bash block above works as-is.
 
+**Already know your 3 target queries?** Skip the LLM auto-suggest pipeline (zero LLM cost, BYO mode added as first-class in `1.0.3`):
+
+```bash
+aeo-platform init --yes --brand=YOURBRAND --domain=YOURDOMAIN.COM \
+  --keywords="best X for Y,top X 2026,X vs alternatives"
+```
+
+Use category-based phrasing («best X for Y» / «top X 2026») the way real users search — the strict commercial-only validator blocks brand-comparison archetypes like «brand vs alternatives» that LLMs auto-correct away for new brands.
+
 The HTML report opens in your browser. Weekly cadence after that: `aeo-platform run && aeo-platform report` (or the PowerShell `if ($LASTEXITCODE -eq 0)` equivalent on PS 5.1).
 
 > Renamed from `@webappski/aeo-tracker` in `1.0.0` (2026-05-13). The `aeo-tracker` CLI command stays as a built-in alias — existing scripts keep working. Migration: `npm i -g aeo-platform`.
@@ -58,7 +67,7 @@ The HTML report opens in your browser. Weekly cadence after that: `aeo-platform 
 
 Six concrete reasons `aeo-platform` exists, in order of how often they decide the install:
 
-- **Measures 4 engines via official APIs** — ChatGPT (`gpt-5-search-api`), Claude (`claude-sonnet-4-6`), Gemini (`gemini-2.5-pro`), Perplexity (`sonar-pro`). No scraping. No proprietary score.
+- **Measures 4 engines via official APIs** — ChatGPT (`gpt-5-search-api`), Claude (`claude-sonnet-4-7`), Gemini (`gemini-2.5-flash`), Perplexity (`sonar-reasoning`). No scraping. No proprietary score.
 - **Local-first.** Raw responses stay on your disk in `aeo-responses/YYYY-MM-DD/`. No telemetry. No traffic to webappski.com. API keys read from `process.env`, never written to disk.
 - **CI-grade.** Exit codes `0/1/2/3` (stable / regressed / invisible / providers errored). `--json` stdout. Cron-friendly.
 - **Zero runtime dependencies.** `"dependencies": {}` in `package.json`. Vanilla Node 20+, single-file HTML report under 200 KB.
@@ -142,9 +151,9 @@ A sample plan from a real bare-site brand: [`examples/sample-plan-output.md`](ht
 | Engine | Default model | API path | Web-search grounding | Required key |
 |---|---|---|---|---|
 | ChatGPT (OpenAI) | `gpt-5-search-api` | direct REST | yes (search-API) | `OPENAI_API_KEY` |
-| Gemini (Google) | `gemini-2.5-pro` | direct REST | optional (request flag) | `GEMINI_API_KEY` |
-| Claude (Anthropic) | `claude-sonnet-4-6` | direct REST | optional (request flag) | `ANTHROPIC_API_KEY` |
-| Perplexity | `sonar-pro` | direct REST | always | `PERPLEXITY_API_KEY` |
+| Gemini (Google) | `gemini-2.5-flash` | direct REST | optional (request flag) | `GEMINI_API_KEY` |
+| Claude (Anthropic) | `claude-sonnet-4-7` | direct REST | optional (request flag) | `ANTHROPIC_API_KEY` |
+| Perplexity | `sonar-reasoning` | direct REST | always | `PERPLEXITY_API_KEY` |
 
 OpenAI + Gemini keys are **required** (two-model competitor extractor: GPT-5-mini + Gemini-2.5-flash cross-check filters hallucinated brand mentions). Anthropic + Perplexity are optional — each adds a column.
 
@@ -400,9 +409,9 @@ jobs:
   "regressionThreshold": 10,
   "providers": {
     "openai":     { "model": "gpt-5-search-api",  "env": "OPENAI_API_KEY" },
-    "gemini":     { "model": "gemini-2.5-pro",    "env": "GEMINI_API_KEY" },
-    "anthropic":  { "model": "claude-sonnet-4-6", "env": "ANTHROPIC_API_KEY" },
-    "perplexity": { "model": "sonar-pro",         "env": "PERPLEXITY_API_KEY" }
+    "gemini":     { "model": "gemini-2.5-flash",  "env": "GEMINI_API_KEY" },
+    "anthropic":  { "model": "claude-sonnet-4-7", "env": "ANTHROPIC_API_KEY" },
+    "perplexity": { "model": "sonar-reasoning",   "env": "PERPLEXITY_API_KEY" }
   }
 }
 ```
@@ -427,7 +436,7 @@ Traditional SEO optimises for click-through from search-result pages. AEO/GEO op
 
 ### Which AI engines does `aeo-platform` cover?
 
-Four, via official APIs: **ChatGPT** (`gpt-5-search-api`), **Claude** (`claude-sonnet-4-6`), **Gemini** (`gemini-2.5-pro`), **Perplexity** (`sonar-pro`). For browser-only surfaces (Perplexity Pro UI, ChatGPT Pro personalisation, Claude.ai UI) use `run-manual` to paste UI answers.
+Four, via official APIs: **ChatGPT** (`gpt-5-search-api`), **Claude** (`claude-sonnet-4-7`), **Gemini** (`gemini-2.5-flash`), **Perplexity** (`sonar-reasoning`). For browser-only surfaces (Perplexity Pro UI, ChatGPT Pro personalisation, Claude.ai UI) use `run-manual` to paste UI answers. Models auto-discover at run time and refresh to the newest stable variant via provider model-listing APIs — pin a specific model in `.aeo-tracker.json::providers[].model` if you need version-locked measurements for compliance.
 
 ### Is my data private?
 
@@ -482,6 +491,10 @@ Yes — create a separate working directory for each brand with its own `.aeo-tr
 ### How often should I run it?
 
 Weekly. Daily adds noise without signal (AI models don't update fast enough to make daily deltas meaningful). Monthly loses meaningful trend resolution.
+
+### What's new in 1.0.4?
+
+Validator-honesty hotfix on top of 1.0.3 trust-restoration work. The `(validated)` tag in `init` now means BOTH validator stages passed (category-validation + industry-fit / commercial-only) — earlier versions tagged queries as `(validated)` after one stage only, and the recovery panel then suggested commands that the validator re-blocked on the next run. Plus a `--manual` interactive escape hatch in the recovery panel for new brands the LLM has no context for. Full notes in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Limitations
 
@@ -703,8 +716,8 @@ MIT — do whatever you want with it.
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "Answer Engine Optimization, Generative Engine Optimization, Brand Visibility Monitoring",
       "operatingSystem": "macOS, Linux, Windows",
-      "softwareVersion": "1.0.0",
-      "datePublished": "2026-05-13",
+      "softwareVersion": "1.0.4",
+      "datePublished": "2026-05-18",
       "license": "https://opensource.org/licenses/MIT",
       "downloadUrl": "https://www.npmjs.com/package/aeo-platform",
       "codeRepository": "https://github.com/webappski/aeo-platform",
@@ -758,7 +771,7 @@ MIT — do whatever you want with it.
         {
           "@type": "Question",
           "name": "Which AI engines does aeo-platform cover?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Four engines via official APIs: ChatGPT (gpt-5-search-api), Claude (claude-sonnet-4-6), Gemini (gemini-2.5-pro), Perplexity (sonar-pro). Manual paste mode also covers browser-only surfaces like Perplexity Pro UI and ChatGPT Pro personalisation." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Four engines via official APIs: ChatGPT (gpt-5-search-api), Claude (claude-sonnet-4-7), Gemini (gemini-2.5-flash), Perplexity (sonar-reasoning). Manual paste mode also covers browser-only surfaces like Perplexity Pro UI and ChatGPT Pro personalisation." }
         },
         {
           "@type": "Question",

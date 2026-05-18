@@ -7,6 +7,14 @@
  *
  * Glob-based on purpose: future panels added to lib/errors/ or lib/init/
  * are auto-covered without remembering to update this test.
+ *
+ * Scope (1.0.4 architect nit): this test scans only lines containing the
+ * literal `aeo-platform init --yes`. Commands that intentionally OMIT --yes
+ * (e.g. validator-recovery option 3, the interactive --manual escape hatch
+ * added in 1.0.4 Fix C) are outside this test's scope by design. The
+ * --yes-less form is an always-works fallback and doesn't need a mode-flag
+ * guard. If you add a new panel that emits an --yes suggestion, this test
+ * will catch a missing mode flag automatically.
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';

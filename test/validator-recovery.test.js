@@ -159,38 +159,109 @@ test('formatRecoveryPanel: shows pre-filled --keywords from pool', () => {
   assert.match(text, /aeo-platform init --yes/);
 });
 
-test('formatRecoveryPanel: empty pool uses editable templates', () => {
+// 1.0.4 Fix B: empty pool + clean category now renders category-based fillers,
+// not brand-comparison templates. The old assertion (`best acme alternatives
+// 2026`) is the exact regression we're guarding against — see Fix B negative
+// regression test below.
+test('formatRecoveryPanel: empty pool + clean category renders category fillers', () => {
   const lines = formatRecoveryPanel({
     allBlockers: [{ query: 'bad', search_behavior: 'mixed' }],
     candidatePool: [],
     currentQueries: ['bad'],
     brand: 'acme',
     domain: 'https://acme.com',
+    category: 'voice form filling',
     useColor: false,
   });
   const text = lines.join('\n');
-  assert.match(text, /best acme alternatives 2026/);
-  assert.match(text, /editable templates/);
+  assert.match(text, /best voice form filling 2026/);
+  assert.match(text, /top voice form filling tools/);
+  assert.match(text, /voice form filling platforms/);
+  assert.match(text, /category templates/);
+  // Negative regression — none of the 1.0.3 brand-comparison templates
+  // should appear (architect REV 2 nit 3: tighten guard to all three).
+  assert.doesNotMatch(text, /best acme alternatives 2026/);
+  assert.doesNotMatch(text, /top acme competitors/);
+  assert.doesNotMatch(text, /acme vs alternatives/);
 });
 
-test('formatRecoveryPanel: includes --force escape hatch and --category hint', () => {
+// 1.0.4 Fix B: empty pool + no clean category → option 1 suppressed entirely
+// rather than emitting brand-comparison templates that would auto-correct on
+// new brands.
+test('formatRecoveryPanel: empty pool + no category suppresses option 1', () => {
+  const lines = formatRecoveryPanel({
+    allBlockers: [{ query: 'bad', search_behavior: 'mixed' }],
+    candidatePool: [],
+    currentQueries: ['bad'],
+    brand: 'acme',
+    domain: 'https://acme.com',
+    // category omitted — defaults to ''
+    useColor: false,
+  });
+  const text = lines.join('\n');
+  // Option 1 (Rerun with hand-picked) is suppressed.
+  assert.doesNotMatch(text, /Rerun with hand-picked queries/);
+  assert.match(text, /no validated alternatives, no clean category/);
+  // Remaining options renumbered: category-hint is now 1, --manual 2, --force 3.
+  assert.match(text, /1\.\s+Try again with an explicit category hint/);
+  assert.match(text, /2\.\s+Drop --yes and switch to interactive mode/);
+  assert.match(text, /3\.\s+Keep the blocked queries anyway/);
+  // No brand-comparison templates regardless of state.
+  assert.doesNotMatch(text, /best acme alternatives 2026/);
+  assert.doesNotMatch(text, /top acme competitors/);
+  assert.doesNotMatch(text, /acme vs alternatives/);
+});
+
+// 1.0.4 Fix B: long marketing-sentence category triggers the ≤4-word guard
+// and is treated as absent (inferCategory often returns 60-160-char strings).
+test('formatRecoveryPanel: long-sentence category is rejected by the ≤4-word guard', () => {
+  const lines = formatRecoveryPanel({
+    allBlockers: [{ query: 'bad', search_behavior: 'mixed' }],
+    candidatePool: [],
+    currentQueries: ['bad'],
+    brand: 'acme', domain: 'https://acme.com',
+    category: 'AEO services for B2B SaaS startups · Visibility tracker for AI search',
+    useColor: false,
+  });
+  const text = lines.join('\n');
+  // The long string must NOT be interpolated into a filler.
+  assert.doesNotMatch(text, /best AEO services for B2B SaaS startups/);
+  // Option 1 suppressed — the panel falls back to the no-category path.
+  assert.doesNotMatch(text, /Rerun with hand-picked queries/);
+});
+
+// 1.0.4 Fix C: --manual interactive escape hatch is option 3 (above --force),
+// and the suggested command drops --yes.
+test('formatRecoveryPanel: option 3 is interactive --manual, above --force', () => {
   const lines = formatRecoveryPanel({
     allBlockers: [{ query: 'q1', search_behavior: 'parametric' }],
     candidatePool: [],
     currentQueries: ['q1'],
-    brand: 'b', domain: 'https://d.com', useColor: false,
+    brand: 'b', domain: 'https://d.com',
+    category: 'form builders',
+    useColor: false,
   });
   const text = lines.join('\n');
+  // --force still appears, --category still appears, --manual now appears.
   assert.match(text, /--force/);
-  // 1.0.3: `--force` was demoted from option 2 ("not recommended") to last
-  // option with a stronger warning. Validate the new copy + ordering.
+  assert.match(text, /--category=/);
+  assert.match(text, /--manual/);
   assert.match(text, /last resort/);
   assert.match(text, /degrades trend data/);
-  assert.match(text, /--category=/);
-  // Category hint promoted to option 2; --force pushed to option 3.
+
+  // Order: --category < --manual < --force (1.0.4 promotion of --manual
+  // above --force; --force remains the truly-last option).
   const categoryIdx = text.indexOf('--category=');
+  const manualIdx = text.indexOf('--manual');
   const forceIdx = text.indexOf('--force');
-  assert.ok(categoryIdx < forceIdx, '--category should appear before --force after 1.0.3 demotion');
+  assert.ok(categoryIdx < manualIdx, '--category should appear before --manual');
+  assert.ok(manualIdx < forceIdx, '--manual should appear before --force (1.0.4 promotion)');
+
+  // The --manual command drops --yes (the entire point of option 3 — it's
+  // the always-works interactive escape hatch).
+  const manualLine = text.split('\n').find(l => l.includes('--manual'));
+  assert.ok(manualLine, '--manual line must exist');
+  assert.doesNotMatch(manualLine, /--yes/, 'option 3 command must NOT contain --yes');
 });
 
 test('formatRecoveryPanel: handles static/llm blockers (different reason shape)', () => {

@@ -127,6 +127,22 @@ Keep the old shell-command snippets in the help text (`aeo-platform init --keywo
 
 ---
 
+### [docs] README quickstart should mention `--keywords` alongside `--auto`
+
+Since 1.0.3 `--keywords` is a first-class third mode (zero LLM cost, BYO 3 queries). README's quickstart shows only `--auto`; users discover `--keywords` only by hitting an error panel. Add a one-line mention right after the `--auto` quickstart block:
+
+```
+Or supply your own queries (zero LLM cost, no auto-suggest):
+  aeo-platform init --yes --brand=YOURBRAND --domain=YOURDOMAIN.COM \
+    --keywords="best X for Y,top X 2026,X vs Y"
+```
+
+Also update the "Full quickstart for first-time terminal users" section step 6 to mention the choice between `--auto` (LLM brainstorm) and `--keywords` (BYO).
+
+**Why deferred from 1.0.3**: patch should not require README changes per semver convention; bundling with the 1.0.4 UX redesign (which also reshapes the validator-recovery panel where `--keywords` is suggested) keeps documentation and code in sync.
+
+---
+
 ### [enhancement] Auto-substitute in --yes mode
 
 When validator blocks all selected queries but has ≥3 validated alternatives
@@ -172,6 +188,13 @@ Reviewer Anna's secondary observation: when a user copy-pastes the README quicks
 ---
 
 ## Done
+
+### 1.0.4 — published 2026-05-18
+
+- `[bug · P0]` `(validated)` tag in Alternatives pool meant only industry-fit passed — pool now enriched from `v.updatedCache` at panel call-site and filtered through commercial-only (`RETRIEVAL`) before rendering
+- `[bug · P0]` Recovery filler templates switched from brand-archetype (`${brand} vs alternatives` etc.) to category-archetype (`best ${category} 2026` etc.), domain-agnostic, with ≤4-word length-guard to reject long marketing-sentence categories from `inferCategory()`
+- `[bug · architectural]` Recovery panel option 3 = drop `--yes` and switch to interactive `--manual` (always-works escape hatch for brands too new for LLM context); `--force` demoted to option 4
+- Architect-review skill expanded with mandatory scenario-wide audit duty (Step 2 + Step 4); caught Fix A's dead-code premise in REV 1 before implementation
 
 ### 1.0.3 — published 2026-05-18
 

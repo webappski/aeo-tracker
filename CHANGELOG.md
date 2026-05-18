@@ -2,6 +2,31 @@
 
 All notable changes to `aeo-platform` (formerly `@webappski/aeo-tracker`).
 
+## [1.0.4] — 2026-05-18
+
+**Validator-honesty hotfix.** Three P0 bugs surfaced during 1.0.3 dogfood on `typelessform.com` (a new brand the LLM has no context for). Every suggested-fix command in the validator-recovery panel was either rejected by the validator on the next run, or fabricated brand-comparison queries that LLMs autocorrect to a different brand's category.
+
+### Fixed
+
+- **`(validated)` tag now means both validator stages passed.** Previously the Alternatives pool was tagged `(validated)` after the category-validation step only — the LLM industry-fit / commercial-only stage never ran on pool entries. When the operator copied those queries via the suggested `--keywords` command, the commercial-only stage re-blocked them on the next run. Now: at init time, immediately after `selectTopThree`, pool entries pass through a dedicated `runTwoStageValidation` pass (~1 batched LLM call, ~$0.001-0.002 per init). The `search_behavior` verdict mutates onto each alternative, the user-facing `(validated)` label in `formatSelection` checks BOTH stages, the persisted `.aeo-tracker.json::candidatePool` carries the verdict, and the recovery panel filter uses real data. Single-provider mode is supported (secondary: null). On validator error or no-provider mode, the panel degrades gracefully (no `search_behavior` ⇒ pass-through, the legacy 1.0.3 behaviour). Applied symmetrically in the `--queries-only` / `--add-queries` / `--replace-queries` branch with cache-hit honouring against `existing.validationCache`.
+- **Recovery panel filler templates switched from brand-archetype to category-archetype.** The old `best ${brand} alternatives 2026` / `top ${brand} competitors` / `${brand} vs alternatives` templates only worked for brands the LLM already knew. For new brands the LLM autocorrected the brand name (`typelessform → Typeform`) and returned competitors of the autocorrected target — guaranteed blocked by the commercial-only check. New fillers are domain-agnostic: `best ${category} 2026` / `top ${category} tools` / `${category} platforms`. A length-guard (≤4 words) suppresses fillers when category is empty or a long marketing sentence (typical of `inferCategory()` output) — the panel honestly says so instead of rendering invalid English. Architectural rule documented in `memory/project_query_archetypes_category_based.md`.
+- **Recovery panel now offers a `--manual` interactive escape hatch.** Previously, for a new brand, every `--yes` path could be blocked by validators — leaving operators with only `--force` (labelled "degrades trend data"). The panel now lists, as **option 3** (above `--force`), the always-works escape: `aeo-platform init --brand=X --domain=Y --manual` (no `--yes`, interactive query prompts). `--force` demoted to option 4.
+
+### Added
+
+- New test `test/validator-recovery-pool-filter.test.js` (4 cases) — verifies the COMMERCIAL_OK filter, including the documented info-loss exception for legacy cache entries that lack `search_behavior`.
+- `test/validator-recovery.test.js` rewritten at the affected cases (architect REV 2 caught that this was a rewrite, not an extension): old brand-filler assertions deleted; new category-filler, no-category-suppression, long-sentence-guard, and `--manual`-ordering cases added.
+
+### Internal
+
+- Architectural rule saved as `memory/project_query_archetypes_category_based.md`: AEO query archetypes are category-based ("best X for Y") the way real users search, NOT brand-comparison ("X vs alternatives"). Brand-comparison archetypes only work for brands the LLM already indexes — exactly the brands that don't need AEO tracking.
+- Architect-review skill at `.claude/skills/release-flow.md` expanded (Step 2 + Step 4) with a mandatory "scenario-wide audit" duty: trace data flow beyond cited file:line, enumerate 3-5 user scenarios per fix with verdicts (helped/unchanged/newly-broken), explicit no-op-fix check, codify-the-bug detection. This release caught the dead-code Fix A under the new duty before any implementation started.
+
+### Known limitations (deferred to 1.0.5)
+
+- `--yes --manual` with no pre-configured queries still errors (`bin/aeo-tracker.js:1350-1353`). Workaround: drop `--yes` per Fix C.
+- UX redesign of validator output, auto-substitute in `--yes`, placeholder-domain hint, CLI hygiene pass (`--json` / `--verbose` / exit codes), README quickstart `--keywords` mention — all deferred per `docs/roadmap.md`.
+
 ## [1.0.3] — 2026-05-18
 
 **Trust-restoration patch.** Fixes a systemic class of bug where the CLI's error panels suggested commands that the CLI's own precondition checks would reject. Plus four smaller fixes flagged during the same director-level audit.

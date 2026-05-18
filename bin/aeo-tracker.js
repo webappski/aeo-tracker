@@ -574,9 +574,14 @@ async function runValidationWithRecovery({
   } = await import('../lib/init/validator-recovery.js');
 
   const printPanel = (allBlockers) => {
+    // 1.0.4 Fix A: candidatePool entries arrive already enriched with
+    // search_behavior from the init-time pool-validation pass — no runtime
+    // enrichment needed here. (REV 2 had an enrichment block here against
+    // v.updatedCache, but that cache only ever contains the 3 config queries
+    // — the join produced zero matches in production. Removed in REV 4.)
     const lines = formatRecoveryPanel({
       allBlockers, candidatePool, currentQueries: queries,
-      brand, domain, useColor,
+      brand, domain, category, useColor,
     });
     for (const ln of lines) console.log(ln);
   };
@@ -771,6 +776,37 @@ async function cmdInit(opts = {}) {
       });
       const selectResult = selectTopThree(researchResult.candidates, { validationSkipped: !validator });
       console.log(`\n${c.dim}  pipeline cost ~$${researchResult.trace.estimatedCostUsd.toFixed(4)}${c.reset}\n`);
+
+      // 1.0.4 Fix A.1e — same pool-validation pass as main cmdInit. Uses
+      // existing.validationCache to honour cache hits for queries the user
+      // has seen before in earlier --queries-only runs.
+      const primaryQOnly = primary;
+      const poolAltsQOnly = selectResult.alternatives.slice(0, 5);
+      if (poolAltsQOnly.length > 0 && primaryQOnly?.providerCall) {
+        try {
+          const { runTwoStageValidation } = await import('../lib/init/research/run-validation.js');
+          const poolValidationQOnly = await runTwoStageValidation({
+            queries: poolAltsQOnly.map(a => a.text),
+            brand, domain: existingDomain, category: categoryDescription,
+            geography: geoTags || [],
+            primary: primaryQOnly,
+            secondary: null,
+            validationCache: existing.validationCache || [],
+            commercialOnly: false,
+          });
+          const verdictsQOnly = poolValidationQOnly.updatedCache || [];
+          for (const a of poolAltsQOnly) {
+            const verdict = verdictsQOnly.find(v => v.query === a.text);
+            if (verdict) {
+              a.search_behavior = verdict.search_behavior;
+              a.confidence = verdict.confidence;
+            }
+          }
+        } catch (err) {
+          console.error(`${c.yellow}  Pool validation skipped: ${errMsg(err)}${c.reset}`);
+        }
+      }
+
       for (const line of formatSelection(selectResult)) console.log(line);
 
       const accept = (nonInteractive ? 'y' : (await ask(`\nReplace queries? [Y]es / [e]dit / [n]o: `, 'y'))).trim();
@@ -785,7 +821,14 @@ async function cmdInit(opts = {}) {
       }
       if (selectResult.alternatives.length > 0) {
         newCandidatePool = selectResult.alternatives.slice(0, 5).map(a => ({
-          text: a.text, intent: a.intent, score: a.score, unverified: !!a.unverified,
+          text: a.text,
+          intent: a.intent,
+          score: a.score,
+          unverified: !!a.unverified,
+          ...(a.search_behavior ? {
+            search_behavior: a.search_behavior,
+            confidence: a.confidence,
+          } : {}),
         }));
       }
     } catch (err) {
@@ -1243,7 +1286,42 @@ async function cmdInit(opts = {}) {
 
                 console.log(`\n${c.dim}  pipeline complete in ${elapsed}ms, est cost ~$${researchResult.trace.estimatedCostUsd.toFixed(4)}${c.reset}\n`);
 
-                // Display selected + alternatives
+                // 1.0.4 Fix A — validate the 5 pool alternatives through both
+                // validator stages (industry-fit + commercial-only) NOW, before
+                // formatSelection renders the (validated) label. Without this,
+                // the alts carry only category-validation status (`unverified`),
+                // and the recovery panel's --keywords suggestions get re-rejected
+                // by commercial-only on the next run. ~1 batched LLM call.
+                // Single-provider mode is supported (secondary: null).
+                const primaryForPoolValidation = researchProviders[0];
+                const poolAlts = selectResult.alternatives.slice(0, 5);
+                if (poolAlts.length > 0 && primaryForPoolValidation?.providerCall) {
+                  try {
+                    const { runTwoStageValidation } = await import('../lib/init/research/run-validation.js');
+                    const poolValidation = await runTwoStageValidation({
+                      queries: poolAlts.map(a => a.text),
+                      brand, domain, category: categoryDescription,
+                      geography: geoTags || [],
+                      primary: primaryForPoolValidation,
+                      secondary: null,
+                      validationCache: [],
+                      commercialOnly: false,
+                    });
+                    const verdicts = poolValidation.updatedCache || [];
+                    for (const a of poolAlts) {
+                      const verdict = verdicts.find(v => v.query === a.text);
+                      if (verdict) {
+                        a.search_behavior = verdict.search_behavior;
+                        a.confidence = verdict.confidence;
+                      }
+                    }
+                  } catch (err) {
+                    console.error(`${c.yellow}  Pool validation skipped: ${errMsg(err)}${c.reset}`);
+                  }
+                }
+
+                // Display selected + alternatives — formatSelection now sees
+                // the enriched alts and renders (validated) honestly.
                 for (const line of formatSelection(selectResult)) console.log(line);
 
                 const accept = (nonInteractive ? 'y' : (await ask(`\nAccept selected queries? [Y]es / [e]dit / [n]o: `, 'y'))).trim();
@@ -1267,11 +1345,20 @@ async function cmdInit(opts = {}) {
                   return match?.candidate.intent || selectResult.selected[i]?.candidate.intent || '';
                 });
 
-                // Persist candidate pool for future swap-without-LLM (D3)
+                // Persist candidate pool for future swap-without-LLM (D3).
+                // 1.0.4 Fix A.1b: include search_behavior + confidence when
+                // pool-validation succeeded so the recovery panel filter and
+                // the (validated) tag stay honest after reload.
                 if (selectResult.alternatives.length > 0) {
                   config_candidatePool = selectResult.alternatives.slice(0, 5).map(a => ({
-                    text: a.text, intent: a.intent, score: a.score,
+                    text: a.text,
+                    intent: a.intent,
+                    score: a.score,
                     unverified: !!a.unverified,
+                    ...(a.search_behavior ? {
+                      search_behavior: a.search_behavior,
+                      confidence: a.confidence,
+                    } : {}),
                   }));
                 }
                 suggestionLang = site.lang || 'en';
