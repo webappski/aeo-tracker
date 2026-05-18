@@ -15,6 +15,9 @@ test('openai: gpt-5-search-api → gpt-5',
 test('openai: gpt-4o-search-preview → gpt-4o',
   () => assert.equal(deriveTrainingModel('openai', 'gpt-4o-search-preview'), 'gpt-4o'));
 
+test('openai: gpt-4o-search → gpt-4o (plain -search suffix used by current catalog)',
+  () => assert.equal(deriveTrainingModel('openai', 'gpt-4o-search'), 'gpt-4o'));
+
 test('openai: gpt-4o-search-preview-2024-12-17 → gpt-4o (dated suffix stripped)',
   () => assert.equal(deriveTrainingModel('openai', 'gpt-4o-search-preview-2024-12-17'), 'gpt-4o'));
 

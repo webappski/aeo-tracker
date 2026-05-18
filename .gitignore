@@ -23,3 +23,6 @@ docs/aeo-recommendations/
 MIGRATION_PLAN.md
 IDENTITY_CLEANUP_PLAN.md
 IDENTITY_TASK_LIST.md
+
+# Agent crash recovery log (webappski-ops orchestration)
+.implementor.log

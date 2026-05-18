@@ -109,15 +109,28 @@ test('createSpinner: TTY useColor=false uses ASCII dots (no Unicode)', () => {
   sp.stop();
 });
 
-test('createSpinner: TTY useColor=true uses Unicode frame + dim color', () => {
+test('createSpinner: TTY useColor=true + useUnicode=true \u2192 Unicode frame + dim color', () => {
   const s = mockStream(true);
-  const sp = createSpinner({ stream: s, useColor: true });
+  // useUnicode is now an explicit opt \u2014 on legacy Windows ConHost the spinner
+  // auto-falls-back to ASCII even with useColor=true, so the test pins both.
+  const sp = createSpinner({ stream: s, useColor: true, useUnicode: true });
   sp.start('x');
   const first = s.writes[0];
   const hasUnicode = /[\u2800-\u28FF]/.test(first);
-  assert.equal(hasUnicode, true, 'color mode must use braille frames');
+  assert.equal(hasUnicode, true, 'unicode mode must use braille frames');
   assert.ok(first.includes('\x1b[2m'), 'must include dim ANSI code');
   assert.ok(first.includes('\x1b[0m'), 'must include reset ANSI code');
+  sp.stop();
+});
+
+test('createSpinner: useColor=true but useUnicode=false \u2192 ASCII dots, still coloured', () => {
+  const s = mockStream(true);
+  const sp = createSpinner({ stream: s, useColor: true, useUnicode: false });
+  sp.start('x');
+  const first = s.writes[0];
+  const hasUnicode = /[\u2800-\u28FF]/.test(first);
+  assert.equal(hasUnicode, false, 'useUnicode=false must not emit braille');
+  assert.ok(first.includes('\x1b[2m'), 'useColor=true must still wrap in dim ANSI');
   sp.stop();
 });
 

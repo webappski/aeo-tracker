@@ -2,6 +2,51 @@
 
 All notable changes to `aeo-platform` (formerly `@webappski/aeo-tracker`).
 
+## [1.0.2] — 2026-05-18
+
+**Provider resilience layer + cross-platform stdin/readline fix.** Two independent fix tracks bundled into one release: (1) the «readline was closed» crash during `init --auto --strict-validation` is fully eliminated by centralising stdin/readline ownership in a single module, and (2) every provider call now goes through a TPM-aware retry/scheduler layer that survives bursty 429 / overload / network errors instead of failing the whole run.
+
+### Fixed
+
+- **`readline was closed` mid-`init`.** Previously two readline interfaces could be created on the same `process.stdin` (one in `cmdInit`, one in `runValidationFlow`), and an unconditional `close()` at one branch tore down the other. Now `lib/util/prompt.js` is the single owner of stdin — the top-level dispatcher creates one prompter and threads it into both commands. 18 ad-hoc `closeRl()` calls removed from `bin/aeo-tracker.js`.
+- **`ReferenceError: ask is not defined` in `run --depth=auto`.** The depth-auto branch referenced an `ask` symbol that existed only inside `cmdInit`. Resolved by routing every prompt through the injected `opts.prompter`.
+- **Parallel readline in `runValidationFlow` removed.** The validator no longer spawns its own `createInterface`; it reuses the prompter passed by the dispatcher.
+- **Non-TTY auto-detection.** `echo "y" | aeo-platform init` no longer touches readline at all — when `process.stdin.isTTY` is false, prompts return their default values silently.
+- **External-close detection.** Ctrl+D or a broken pipe now produces a readable error («Input stream closed (Ctrl+D or pipe end) — cannot prompt further») instead of `ERR_USE_AFTER_CLOSE` or a hang.
+- **Bursty 429 / `Retry-After` ignored.** OpenAI's `Retry-After: 140ms` was previously hit with the old 3-attempt cap and gave up in ~420ms. The new budget-based retry waits up to `RATE_LIMIT_MAX_WAIT_MS` of wall-clock (default ~5min) before surrendering, honouring the parsed `Retry-After`.
+- **CRLF/LF diff noise on Windows contributors.** `.gitattributes` now forces `eol=lf` on all text files (with explicit `crlf` for `*.cmd`/`*.bat`/`*.ps1`), preventing the round-trip where Git on Windows rewrites LF→CRLF on checkout and pollutes diffs.
+
+### Added
+
+- **Provider resilience layer** (`lib/providers/_retry.js`, `tpm-ledger.js`, `rate-limits.js`, `lib/util/scheduler.js`).
+  - **TPM ledger:** sliding 60-second window tracking tokens-per-minute per provider; learns provider limits from parsed 429 bodies (OpenAI emits structured `Limit X, Used Y, Requested Z`); blocks the next request if the projected budget would exceed the learnt limit.
+  - **Cooldown gate:** honest cooldown computed as `now − firstTokenInWindow + safety` instead of a fixed 30s sleep, so we re-enter exactly when the oldest token leaves the rolling window.
+  - **Retry classification:** errors split into `rate-limit` (budget-based retry, up to ~5min total wall-clock) vs `overload` (fast 2s loop with ±500ms jitter, capped at 5 attempts) vs permanent (auth, billing, 4xx, malformed).
+  - **Per-provider concurrency semaphore:** prevents one provider's stampede from starving another's budget.
+- **`lib/util/fetch-with-timeout.js`** — uniform `AbortSignal.timeout()` wrapper with a fallback for Node 20.0–20.2 (where `AbortSignal.any` is missing). Distinct default budgets for `bootstrap` (30s) / `runtime` (60s) / `site` (15s) calls.
+- **`lib/util/prompt.js`** — single owner of `process.stdin` and `readline.createInterface` for the entire CLI. Lazy: never creates a readline in non-interactive mode. Auto-non-interactive when stdin is not a TTY. Safety-net `process.on('exit')` closes any open readline synchronously.
+- **`lib/util/live-rows.js`** — live-updating per-engine status table in the terminal (TTY mode) with ASCII fallback for legacy Windows ConHost; detects Windows Terminal via `WT_SESSION` and VSCode/iTerm via `TERM_PROGRAM`; restores cursor on `SIGINT`/`exit`.
+- **`lib/util/open-browser.js`** — cross-platform browser launcher: `cmd /c start "" url` on Windows, `open` on macOS, `xdg-open` on Linux, all detached + `stdio: ignore` + `unref()` so the CLI exits cleanly.
+- **`lib/util/safe-filename.js`** — sanitises engine/query strings before they hit `aeo-responses/`: strips Windows-reserved characters (`<>:"/\\|?*`), reserved names (`CON`/`NUL`/`AUX`/…), and control codes.
+- **`lib/util/cost-estimate.js`** — per-run cost projection shown during `init` and at the start of `run`, derived from the active model pricing table and per-cell token estimates (calibrated against AEO_LOG_TOKENS=1 runs).
+- **`lib/providers/main-options.js`** — per-provider main-call options (reasoning effort, thinking budget, etc.) centralised so the four provider modules stop drifting.
+- **`lib/providers/discover.js` overhaul** — paginated/retried model enumeration for all four providers; falls back to the previous-known model when the bootstrap query itself rate-limits, instead of dying with «discover failed».
+- **README quickstart blocks for PowerShell and CMD** alongside the existing bash/zsh instructions for first-time Windows users.
+
+### Tests
+
+- New test files (≈1500 lines of assertions): `prompt-lifecycle.test.js`, `no-stray-readline.test.js`, `live-rows.test.js`, `tpm-ledger.test.js`, `rate-limits.test.js`, `scheduler.test.js`, `discover.test.js`, `openai.test.js`, `anthropic.test.js`, `main-options.test.js`, `fetch-with-timeout.test.js`, `cli-smoke.test.js`, `depth.test.js`.
+- **Architectural invariant test** (`test/no-stray-readline.test.js`) fails CI if any file outside `lib/util/prompt.js` touches `createInterface` or `process.stdin.on/once/read/resume/pause` — locks in the singleton ownership pattern.
+
+### Known limitations (intentional, not blocking)
+
+- `_retry.js` and `classify-error.js` do not match a raw HTTP 408 status by number. Most 408-equivalent failures still flow through `ETIMEDOUT` / `fetch failed` / `socket hang up` which are matched. If you see a literal `408` from a provider, retry-by-hand is the workaround.
+- Gemini API key is passed in the request URL (per Google's own examples) rather than via `x-goog-api-key` header. The CLI runs locally on the user's machine, but reverse proxies or shared shells will see the key in their connection logs.
+
+## [1.0.1] — 2026-05-14
+
+Republish of `1.0.0` with the `version` field bumped after a stale-tag accident on npm. No code or behaviour changes.
+
 ## [1.0.0] — 2026-05-13
 
 **Renamed: `@webappski/aeo-tracker` → `aeo-platform`.** The «tracker» name described only the measurement layer; the tool now spans measure → audit → diagnose → recommend → plan-generate → track. The new package name reflects the full scope.
@@ -521,7 +566,7 @@ A new commercial-only validator blocks methodological / informational queries (e
 - Hand-edit `.aeo-tracker.json` to replace the flagged query with a commercial one like "best X 2026" / "top X for Y" / "X consultants for Z"
 - Temporary escape hatch: `aeo-tracker run --force` (use only for cross-industry interpretation research)
 
-**Fields retained for backward compatibility:** old configs with a `competitors: [...]` field are still readable (field is silently ignored — competitor detection is now fully automatic via the two-model extractor). Missing `category` and `validationCache` fields fall back safely. Outdated model names in `providers[].model` (e.g. `gpt-4o-search-preview`) are auto-replaced by the latest available model via `discoverModels` at run start — no user action needed.
+**Fields retained for backward compatibility:** old configs with a `competitors: [...]` field are still readable (field is silently ignored — competitor detection is now fully automatic via the two-model extractor). Missing `category` and `validationCache` fields fall back safely. Outdated model names in `providers[].model` (e.g. `gpt-4o-search-preview`) are auto-replaced by the latest available model via `discoverModels` at run start — no user action needed. (Note: this auto-replace behaviour was later removed; current versions require `aeo-platform init` to refresh model selection.)
 
 ### Added — Full HTML report
 

@@ -9,6 +9,8 @@
 
 > **`aeo-platform` is the open-source CLI for answer-engine optimization (AEO / GEO).** It measures your brand across **ChatGPT, Claude, Gemini, and Perplexity**, audits AI-bot crawlability + authority signals, and exports a JSON brand-context you paste into any AI for a personalised **30-mission AEO plan**. MIT-licensed. Runs locally. Zero runtime dependencies. Free alternative to Otterly, Profound, Peec, and Bluefish.
 
+**macOS / Linux (bash / zsh)**
+
 ```bash
 npm install -g aeo-platform
 
@@ -20,7 +22,33 @@ aeo-platform init --yes --brand=YOURBRAND --domain=YOURDOMAIN.COM --auto \
   && aeo-platform report
 ```
 
-The HTML report opens in your browser. Weekly cadence after that: `aeo-platform run && aeo-platform report`.
+**Windows (PowerShell)**
+
+```powershell
+npm install -g aeo-platform
+
+$env:OPENAI_API_KEY = "sk-proj-..."     # required (current session only)
+$env:GEMINI_API_KEY = "AIzaSy..."        # required (current session only)
+
+aeo-platform init --yes --brand=YOURBRAND --domain=YOURDOMAIN.COM --auto
+if ($LASTEXITCODE -eq 0) { aeo-platform run }
+if ($LASTEXITCODE -eq 0) { aeo-platform report }
+```
+
+**Windows (CMD)**
+
+```cmd
+npm install -g aeo-platform
+
+set OPENAI_API_KEY=sk-proj-...
+set GEMINI_API_KEY=AIzaSy...
+
+aeo-platform init --yes --brand=YOURBRAND --domain=YOURDOMAIN.COM --auto && aeo-platform run && aeo-platform report
+```
+
+> Note: `&&` chain works in CMD and PowerShell 7+, but **not in PowerShell 5.1** (the default Windows 10/11 shell — check via `$PSVersionTable.PSVersion`). For persistent env vars across sessions on Windows, see the [Full quickstart](#full-quickstart-for-first-time-terminal-users) below. Git Bash and WSL users — the bash block above works as-is.
+
+The HTML report opens in your browser. Weekly cadence after that: `aeo-platform run && aeo-platform report` (or the PowerShell `if ($LASTEXITCODE -eq 0)` equivalent on PS 5.1).
 
 > Renamed from `@webappski/aeo-tracker` in `1.0.0` (2026-05-13). The `aeo-tracker` CLI command stays as a built-in alias — existing scripts keep working. Migration: `npm i -g aeo-platform`.
 
@@ -41,8 +69,29 @@ Six concrete reasons `aeo-platform` exists, in order of how often they decide th
 The 2-key minimum above (OpenAI + Gemini) covers ChatGPT and Gemini columns. Two more keys are optional and each adds an engine column to the report:
 
 ```bash
+# macOS / Linux
 export ANTHROPIC_API_KEY="sk-ant-..."   # adds Claude column
 export PERPLEXITY_API_KEY="pplx-..."     # adds Perplexity column
+```
+
+```powershell
+# Windows PowerShell — current session
+$env:ANTHROPIC_API_KEY = "sk-ant-..."
+$env:PERPLEXITY_API_KEY = "pplx-..."
+
+# Windows PowerShell — persistent (User scope, requires terminal restart)
+[System.Environment]::SetEnvironmentVariable('ANTHROPIC_API_KEY','sk-ant-...','User')
+[System.Environment]::SetEnvironmentVariable('PERPLEXITY_API_KEY','pplx-...','User')
+```
+
+```cmd
+:: Windows CMD — current session
+set ANTHROPIC_API_KEY=sk-ant-...
+set PERPLEXITY_API_KEY=pplx-...
+
+:: Windows CMD — persistent (requires terminal restart)
+setx ANTHROPIC_API_KEY "sk-ant-..."
+setx PERPLEXITY_API_KEY "pplx-..."
 ```
 
 Get keys at: [platform.openai.com/api-keys](https://platform.openai.com/api-keys), [aistudio.google.com/apikey](https://aistudio.google.com/apikey), [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys), [docs.perplexity.ai](https://docs.perplexity.ai/).
@@ -102,10 +151,20 @@ OpenAI + Gemini keys are **required** (two-model competitor extractor: GPT-5-min
 For engines whose API tier you can't access (Perplexity Pro browser, ChatGPT Pro UI personalisation, Claude.ai UI), use **manual paste mode**:
 
 ```bash
+# macOS / Linux
 mkdir perplexity-responses
 # paste UI answers into perplexity-responses/q1.txt, q2.txt, q3.txt
 aeo-platform run-manual perplexity --from-dir ./perplexity-responses
 ```
+
+```powershell
+# Windows PowerShell
+New-Item -ItemType Directory perplexity-responses
+# paste UI answers into perplexity-responses\q1.txt, q2.txt, q3.txt
+aeo-platform run-manual perplexity --from-dir .\perplexity-responses
+```
+
+> **Windows note:** save your `q1.txt`/`q2.txt`/`q3.txt` files as **UTF-8 without BOM**. Notepad's default («ANSI» or «UTF-8 with BOM») leaves an invisible byte at the file start that can affect mention detection. In Notepad: *File → Save As → Encoding: UTF-8* (NOT «UTF-8 with BOM»). VSCode and Notepad++ default to UTF-8 without BOM.
 
 Results merge into today's `_summary.json` alongside API runs. `diff` and `report` treat both identically.
 
@@ -191,7 +250,7 @@ Sub-components with insufficient data (e.g. zero rank positions in a first run) 
 | `aeo-platform report` | Generate `report.md` + `report.html`. HTML auto-opens in your browser |
 | `aeo-platform diff` | Compare last two runs — what changed, what's new, what regressed |
 | `aeo-platform export --format=csv` | Flatten every snapshot into a CSV (or JSON) for Looker / Sheets / your warehouse |
-| `aeo-platform crawl-stats --log-file=path` | Parse Apache/nginx access logs to see AI-bot crawl frequency on your own site |
+| `aeo-platform crawl-stats --log-file=path` | Parse Apache/nginx access logs to see AI-bot crawl frequency on your own site (Combined Log Format only — IIS W3C Extended Format not supported, see [Limitations](#limitations)) |
 
 `aeo-platform --help` lists every flag. `aeo-platform <cmd> --help` for per-command help.
 
@@ -241,7 +300,7 @@ Tune the threshold in `.aeo-tracker.json`:
 
 ## CI integration
 
-**Bash + cron:**
+**Bash + cron (macOS / Linux):**
 
 ```bash
 #!/bin/bash
@@ -254,6 +313,50 @@ case $? in
 esac
 ```
 
+**Windows (PowerShell + Task Scheduler):**
+
+> One-time setup: enable script execution for the current user — `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (or skip and use `-ExecutionPolicy Bypass` in the schtasks command below).
+
+Save as `aeo-audit.ps1`:
+
+```powershell
+# UTF-8 output (PowerShell 5.1 defaults to UTF-16; PowerShell 7+ is UTF-8 already)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
+$logDir = Join-Path $env:LOCALAPPDATA 'aeo'
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$logPath = Join-Path $logDir ("aeo-{0}.json" -f (Get-Date -Format 'yyyy-MM-dd'))
+
+aeo-platform run --json | Out-File -Encoding utf8 $logPath
+$exitCode = $LASTEXITCODE   # capture BEFORE any other command — Invoke-RestMethod overwrites $LASTEXITCODE
+
+function Send-SlackAlert($msg) {
+  if ($env:SLACK_WEBHOOK) {
+    Invoke-RestMethod -Uri $env:SLACK_WEBHOOK -Method Post `
+      -Body (@{text = $msg} | ConvertTo-Json) -ContentType 'application/json' | Out-Null
+  }
+}
+
+switch ($exitCode) {
+  0 { }                                                     # stable
+  1 { Send-SlackAlert 'AEO regression detected' }
+  2 { }                                                     # invisible — expected for new brands
+  3 { Send-SlackAlert 'aeo-platform: API errors' }
+}
+exit $exitCode
+```
+
+Register as a weekly Task Scheduler job (Monday 09:00 **local time** — Task Scheduler does not understand UTC):
+
+```cmd
+schtasks /Create /SC WEEKLY /D MON /TN "AEO Weekly Audit" ^
+  /TR "powershell -NoProfile -ExecutionPolicy Bypass -File C:\path\to\aeo-audit.ps1" ^
+  /ST 09:00
+```
+
+> Cron and Task Scheduler use different time bases: Linux cron typically runs in the server's TZ (often UTC on cloud VMs), Task Scheduler `/ST` is always **local machine time**. GitHub Actions cron (next block) is **always UTC**. Pick your TZ deliberately.
+
 **GitHub Actions:**
 
 ```yaml
@@ -263,7 +366,9 @@ on:
 
 jobs:
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest             # works identically with windows-latest;
+                                       # on Windows replace bash `>` with `| Out-File -Encoding utf8`
+                                       # to avoid UTF-16 BOM in the JSON artifact.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -352,9 +457,27 @@ No. New brands typically score 0–5% in the first 4 weeks. AI engines update wh
 
 Yes. The auto-suggest prompt tells the LLM to match the site's primary language (detected from `<html lang>`). Tested on English, Polish, and German sites.
 
+### Does `aeo-platform` work on Windows?
+
+Yes — Node 20+ and `npm install -g aeo-platform` is all you need. The CLI uses `path.join` everywhere, opens the HTML report via `start` on Windows (the PowerShell/CMD equivalent of macOS `open` and Linux `xdg-open`), and reads API keys from `process.env` identically. **PowerShell 5.1, PowerShell 7+, CMD, Git Bash, and WSL are all supported.**
+
+Known Windows-specific gotchas to watch for:
+
+- **`&&` chain operator** works in CMD and PowerShell 7+; **not in PowerShell 5.1** (the default Windows 10/11 shell — check via `$PSVersionTable.PSVersion`). Use `;` or separate commands with `if ($LASTEXITCODE -eq 0) { ... }` checks.
+- **`aeo-platform run --json > out.json` in PowerShell 5.1 writes UTF-16 LE**, which breaks JSON parsers downstream. Pipe through `Out-File -Encoding utf8` instead, or upgrade to PowerShell 7+ (UTF-8 by default). See the CI section above for the full pattern.
+- **PowerShell Execution Policy** blocks `.ps1` scripts by default. Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or pass `-ExecutionPolicy Bypass` to `powershell.exe` for one-off invocations.
+- **`npm i -g` PATH issue:** binaries land in `%APPDATA%\npm` which is not always on PATH right after Node install. Restart the terminal if `aeo-platform` is not found, or use `npx aeo-platform` instead (no global install needed).
+- **Persistent env vars require a terminal restart.** `setx` (CMD) and `[System.Environment]::SetEnvironmentVariable(...,'User')` (PowerShell) write to the User profile but do not affect the current session. Use `set` / `$env:` for the current session only.
+- **`crawl-stats` parses Apache/nginx logs only** — IIS W3C Extended Log Format is not supported in 1.0.x (on the roadmap). Workaround: convert with [Log Parser 2.2](https://www.microsoft.com/en-us/download/details.aspx?id=24659) to NCSA Combined first.
+- **Brand names with non-ASCII characters** render correctly in PowerShell 7+ and Windows Terminal; legacy `cmd.exe` may show `?` for Cyrillic / CJK in console output (file output to `_summary.json` is always UTF-8 and unaffected). For Cyrillic console output in CMD: `chcp 65001` switches the codepage to UTF-8.
+- **Manual paste mode + Notepad:** save `.txt` files as **UTF-8 without BOM** (Notepad's «UTF-8 with BOM» default leaves an invisible byte at file start that affects mention detection). VSCode and Notepad++ default to UTF-8 without BOM.
+- **Long paths (`MAX_PATH` 260 chars).** If your repo lives deep under `C:\Users\<long-username>\...` and you hit `ENAMETOOLONG` mid-run, enable Windows Long Paths once: `Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1` (admin PowerShell, then reboot). Alternative: move the working directory closer to a drive root (e.g. `C:\aeo\<brand>`).
+- **Windows Defender** occasionally flags Node-based CLI tools. If `aeo-platform run` is blocked, add `%APPDATA%\npm` to Defender exclusions.
+- **Task Scheduler `/ST` is local time, not UTC** (unlike GitHub Actions cron). Pick your timezone deliberately.
+
 ### Can I track multiple brands?
 
-Yes — create a separate working directory for each brand with its own `.aeo-tracker.json`. A wrapper script that loops over client directories is ~10 lines of bash.
+Yes — create a separate working directory for each brand with its own `.aeo-tracker.json`. A wrapper script that loops over client directories is ~10 lines of bash (macOS / Linux) or PowerShell (Windows).
 
 ### How often should I run it?
 
@@ -369,6 +492,7 @@ Honest list of where `aeo-platform` stops short — read before you wire it into
 - **Provider rate limits on free tiers.** Running 3 queries in parallel is usually fine, but back-to-back brand runs can hit 429s.
 - **Single-brand scope per config.** Multi-brand workflows need a wrapper that loops over per-client directories.
 - **Gemini citation URLs are Vertex AI redirect tokens** — resolved to readable domains using the `title` field; unreadable tokens are dropped rather than displayed.
+- **`crawl-stats` parses Apache/nginx Combined Log Format only.** IIS W3C Extended Log Format is not supported in 1.0.x (on the roadmap). Workaround for IIS users: pre-convert with [Log Parser 2.2](https://www.microsoft.com/en-us/download/details.aspx?id=24659) (`logparser "SELECT * INTO out.log FROM in.log" -o:NCSA`) to NCSA Combined format, then point `--log-file=out.log`.
 
 ## Roadmap
 
@@ -399,9 +523,19 @@ The CLI command `aeo-tracker` keeps working as a built-in alias inside `aeo-plat
 
 If you've never run a CLI tool before, that's fine — `aeo-platform` needs one-time setup, but the weekly run takes zero terminal skill after that.
 
-**1. Open Terminal.** macOS: ⌘+Space → type *Terminal* → Enter. Windows 10/11: Start menu → *PowerShell* → Enter. Linux: you know where it is.
+**1. Open Terminal.**
 
-**2. Install Node.js 20+ (once per machine).** Check first: paste `node --version` + Enter. If it prints `v20.x` or higher, skip to step 3. Otherwise download from [nodejs.org](https://nodejs.org) (LTS version). Re-open Terminal after install.
+- **macOS:** ⌘+Space → type *Terminal* → Enter.
+- **Windows 11:** Win+X → *Terminal* (recommended — runs PowerShell 7+ if installed, else Windows PowerShell 5.1).
+- **Windows 10:** Start menu → *Windows PowerShell* → Enter (or install [Windows Terminal](https://aka.ms/terminal) from the Microsoft Store).
+- **Linux:** you know where it is.
+
+**2. Install Node.js 20+ (once per machine).** Check first: paste `node --version` + Enter. If it prints `v20.x` or higher, skip to step 3. Otherwise:
+
+- **macOS / Linux:** download from [nodejs.org](https://nodejs.org) (LTS version), or `brew install node@20`.
+- **Windows:** download from [nodejs.org](https://nodejs.org) (LTS version), or `winget install OpenJS.NodeJS.LTS`, or `choco install nodejs-lts` (Chocolatey users).
+
+Re-open Terminal after install so PATH refreshes.
 
 **3. Install aeo-platform.**
 
@@ -409,14 +543,17 @@ If you've never run a CLI tool before, that's fine — `aeo-platform` needs one-
 npm install -g aeo-platform
 ```
 
-If you see `EACCES`, fix per [npm docs](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). Typically `sudo npm install -g aeo-platform` on macOS / Linux.
+- **macOS / Linux:** if you see `EACCES`, fix per [npm docs](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally) — typically `sudo npm install -g aeo-platform`.
+- **Windows:** `npm i -g` puts the binary in `%APPDATA%\npm`, which is not always on PATH right after Node install. If `aeo-platform` is not found after install — restart your terminal. If still missing, use `npx aeo-platform <command>` instead (skips global install entirely). Windows does not need `sudo`.
 
 **4. Get your 2 required API keys.** Open these in new tabs, sign up (free), click *Create new key*:
 
 - [OpenAI](https://platform.openai.com/api-keys) — key starts with `sk-proj-...`
 - [Google Gemini](https://aistudio.google.com/apikey) — key starts with `AIzaSy...`
 
-**5. Save the keys to your shell.** Replace placeholders with the actual key strings:
+**5. Save the keys to your shell.** Replace placeholders with the actual key strings.
+
+**macOS (zsh) / Linux (bash):**
 
 ```bash
 echo 'export OPENAI_API_KEY="PASTE_OPENAI_KEY_HERE"' >> ~/.zshrc
@@ -432,7 +569,31 @@ echo 'export PERPLEXITY_API_KEY="pplx-..."'  >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Windows PowerShell: use `[System.Environment]::SetEnvironmentVariable('OPENAI_API_KEY','...','User')` and restart PowerShell. Bash users: replace `~/.zshrc` with `~/.bashrc`.
+> Bash users on Linux: replace `~/.zshrc` with `~/.bashrc`. Git Bash on Windows: same — `~/.bashrc`.
+
+**Windows (PowerShell — persistent, User scope):**
+
+```powershell
+[System.Environment]::SetEnvironmentVariable('OPENAI_API_KEY','PASTE_OPENAI_KEY_HERE','User')
+[System.Environment]::SetEnvironmentVariable('GEMINI_API_KEY','PASTE_GEMINI_KEY_HERE','User')
+
+# Optional — adds Claude / Perplexity columns
+[System.Environment]::SetEnvironmentVariable('ANTHROPIC_API_KEY','sk-ant-...','User')
+[System.Environment]::SetEnvironmentVariable('PERPLEXITY_API_KEY','pplx-...','User')
+```
+
+**Windows (CMD — persistent):**
+
+```cmd
+setx OPENAI_API_KEY "PASTE_OPENAI_KEY_HERE"
+setx GEMINI_API_KEY "PASTE_GEMINI_KEY_HERE"
+
+:: Optional
+setx ANTHROPIC_API_KEY "sk-ant-..."
+setx PERPLEXITY_API_KEY "pplx-..."
+```
+
+> Windows note: both `SetEnvironmentVariable(...,'User')` and `setx` write to the User profile and **require a terminal restart** before `aeo-platform` sees the new variables. To verify after restart: `echo $env:OPENAI_API_KEY` (PowerShell) or `echo %OPENAI_API_KEY%` (CMD). For one-off / current-session-only use, `$env:OPENAI_API_KEY = "..."` (PowerShell) or `set OPENAI_API_KEY=...` (CMD) take effect immediately but vanish when the window closes. `setx` has a 1024-character limit per value (not an issue for current API keys, but worth knowing for long custom values).
 
 **6. Run aeo-platform.** Replace `YOURBRAND` and `YOURDOMAIN.COM`:
 
@@ -456,6 +617,20 @@ Common on dev machines — you already use ChatGPT / Claude via another tool and
 3. **Interactive prompt** — for any provider still unmatched, init asks for the env var name directly.
 
 Whatever you confirm is written into `.aeo-tracker.json::providers[].env`, so every subsequent run knows where to look. Your actual key values stay in `process.env` — never written to disk.
+
+**Windows users:** `init` reads `process.env` identically on all platforms — your custom-name variables are detected the same way. Set them via:
+
+```powershell
+# PowerShell (persistent)
+[System.Environment]::SetEnvironmentVariable('OPENAI_API_KEY_DEV','sk-proj-...','User')
+```
+
+```cmd
+:: CMD (persistent)
+setx OPENAI_API_KEY_DEV "sk-proj-..."
+```
+
+Restart the terminal after either command, then run `aeo-platform init`.
 
 CI mode (`init --yes`) disables interactive prompts. For CI, set the standard names in env, or pre-commit `.aeo-tracker.json` with explicit `env` field per provider.
 
@@ -498,6 +673,8 @@ Methodology lives in the weekly reports at [webappski.com/blog](https://webappsk
 ## Contributing
 
 PRs welcome. Open an issue first if you're planning a non-trivial change so we can sketch the shape together. Bug reports and feature requests at [github.com/webappski/aeo-platform/issues](https://github.com/webappski/aeo-platform/issues).
+
+> **Running from source on Windows:** the shebang line in `bin/aeo-tracker.js` is ignored by Windows, so `./bin/aeo-tracker.js` won't work. Use `node bin/aeo-tracker.js <command>` for development, or install globally (`npm install -g .` from the repo root) which creates the `aeo-platform.cmd` wrapper that handles the shebang transparently.
 
 ## License
 
