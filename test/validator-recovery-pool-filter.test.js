@@ -76,6 +76,84 @@ test('pool entries without search_behavior pass through (intentional info-loss e
   assert.match(text, /q-legacy-c/);
 });
 
+// ─── 8-cell matrix invariant (1.0.4 post-publish, cli-walkthrough catch) ───
+// Recovery panel option 1 must contain EXACTLY 3 `--keywords` items OR
+// be suppressed entirely. The CLI's own --keywords precondition rejects
+// any other count. This invariant covers cells D (pool=1+unclean) and F
+// (pool=2+unclean) that the original 1.0.4 implementation missed.
+
+function countKeywordsInPanel(lines) {
+  const text = lines.join('\n');
+  const m = text.match(/--keywords="([^"]+)"/);
+  if (!m) return null;  // option 1 not emitted
+  return m[1].split(',').length;
+}
+
+function makeCell({ poolRetrievals, poolBlocked, category }) {
+  const pool = [
+    ...Array.from({ length: poolRetrievals }, (_, i) => ({
+      text: `q-good-${i + 1}`, search_behavior: 'retrieval-triggered',
+    })),
+    ...Array.from({ length: poolBlocked }, (_, i) => ({
+      text: `q-bad-${i + 1}`, search_behavior: 'parametric-only',
+    })),
+  ];
+  return formatRecoveryPanel({
+    allBlockers: [{ query: 'bad', search_behavior: 'parametric-only' }],
+    candidatePool: pool,
+    currentQueries: ['bad'],
+    brand: 'acme', domain: 'https://acme.com',
+    category,
+    useColor: false,
+  });
+}
+
+test('matrix cell A (pool=0, clean category): option 1 has exactly 3 keywords (all fillers)', () => {
+  const count = countKeywordsInPanel(makeCell({ poolRetrievals: 0, poolBlocked: 0, category: 'form filling' }));
+  assert.equal(count, 3);
+});
+
+test('matrix cell B (pool=0, unclean): option 1 suppressed entirely', () => {
+  const count = countKeywordsInPanel(makeCell({ poolRetrievals: 0, poolBlocked: 0, category: '' }));
+  assert.equal(count, null, 'option 1 must be suppressed when finalQueries.length !== 3');
+});
+
+test('matrix cell C (pool=1, clean): option 1 has exactly 3 keywords (1 alt + 2 fillers)', () => {
+  const count = countKeywordsInPanel(makeCell({ poolRetrievals: 1, poolBlocked: 0, category: 'form filling' }));
+  assert.equal(count, 3);
+});
+
+test('matrix cell D (pool=1, unclean): option 1 SUPPRESSED (was the regression)', () => {
+  // Without top-up at the cmdInit level, formatRecoveryPanel sees pool=1
+  // and no clean category. Pre-1.0.4-safety-net it would have emitted
+  // --keywords="q-good-1" (1 keyword) and the CLI would have rejected it.
+  // Safety net (showOption1 = finalQueries.length === 3) suppresses cleanly.
+  const count = countKeywordsInPanel(makeCell({ poolRetrievals: 1, poolBlocked: 0, category: '' }));
+  assert.equal(count, null);
+});
+
+test('matrix cell E (pool=2, clean): option 1 has exactly 3 keywords (2 alts + 1 filler)', () => {
+  const count = countKeywordsInPanel(makeCell({ poolRetrievals: 2, poolBlocked: 0, category: 'form filling' }));
+  assert.equal(count, 3);
+});
+
+test('matrix cell F (pool=2, unclean): option 1 SUPPRESSED (was the user-observed bug)', () => {
+  // Same regression class as D, the cell the maintainer observed on
+  // typelessform.com. Safety net suppresses.
+  const count = countKeywordsInPanel(makeCell({ poolRetrievals: 2, poolBlocked: 0, category: '' }));
+  assert.equal(count, null);
+});
+
+test('matrix cell G (pool=3, clean): option 1 has exactly 3 keywords (3 alts)', () => {
+  const count = countKeywordsInPanel(makeCell({ poolRetrievals: 3, poolBlocked: 0, category: 'form filling' }));
+  assert.equal(count, 3);
+});
+
+test('matrix cell H (pool=3, unclean): option 1 has exactly 3 keywords (3 alts, fillers ignored)', () => {
+  const count = countKeywordsInPanel(makeCell({ poolRetrievals: 3, poolBlocked: 0, category: '' }));
+  assert.equal(count, 3);
+});
+
 test('mixed pool: only RETRIEVAL entries fill the first 3 slots, fillers cover the rest', () => {
   const lines = formatRecoveryPanel({
     allBlockers: [{ query: 'bad', search_behavior: 'parametric-only' }],

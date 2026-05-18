@@ -53,6 +53,20 @@ for (const file of targets) {
       if (!MODE_RE.test(window)) {
         violations.push(`${relative(repoRoot, file)}:${i + 1} — missing mode flag in suggestion`);
       }
+      // 1.0.4 post-publish: also catch the cells-D-and-F regression class.
+      // Any emitted --keywords="..." must contain exactly 3 comma-separated
+      // items, matching the CLI's own precondition gate at
+      // bin/aeo-tracker.js cmdInit. Static-grep approximates "3 items" by
+      // counting commas inside the literal; runtime template interpolation
+      // (`${finalQueries.join(',')}`) is opaque to this scan, so we only
+      // flag string literals with a wrong static count.
+      const m = lines[i].match(/--keywords="([^$"][^"]*)"/);
+      if (m) {
+        const itemCount = m[1].split(',').filter(s => s.trim().length > 0).length;
+        if (itemCount !== 3) {
+          violations.push(`${relative(repoRoot, file)}:${i + 1} — --keywords literal has ${itemCount} items (must be exactly 3)`);
+        }
+      }
     }
   }
 }

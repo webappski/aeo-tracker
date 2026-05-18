@@ -201,7 +201,9 @@ test('formatRecoveryPanel: empty pool + no category suppresses option 1', () => 
   const text = lines.join('\n');
   // Option 1 (Rerun with hand-picked) is suppressed.
   assert.doesNotMatch(text, /Rerun with hand-picked queries/);
-  assert.match(text, /no validated alternatives, no clean category/);
+  // 1.0.4 post-publish: suppressed-state message simplified for the
+  // finalQueries.length !== 3 safety net.
+  assert.match(text, /pool insufficient for option 1/);
   // Remaining options renumbered: category-hint is now 1, --manual 2, --force 3.
   assert.match(text, /1\.\s+Try again with an explicit category hint/);
   assert.match(text, /2\.\s+Drop --yes and switch to interactive mode/);

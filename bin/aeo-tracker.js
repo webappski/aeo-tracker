@@ -807,6 +807,32 @@ async function cmdInit(opts = {}) {
         }
       }
 
+      // 1.0.4 pool-topup — symmetric with main cmdInit. Uses
+      // existing.validationCache for cache hits.
+      const retrievalCountQOnly = poolAltsQOnly.filter(a =>
+        a.search_behavior === 'retrieval-triggered'
+      ).length;
+      if (retrievalCountQOnly < 3 && primaryQOnly?.providerCall) {
+        const { topUpPool } = await import('../lib/init/research/pool-topup.js');
+        const topUpsQOnly = await topUpPool({
+          needed: 3 - retrievalCountQOnly,
+          brand, domain: existingDomain, category: categoryDescription,
+          site, primary: primaryQOnly,
+          audienceTags, geoTags,
+          validationCache: existing.validationCache || [],
+        });
+        if (topUpsQOnly.length > 0) {
+          const existingTextsQOnly = new Set([
+            ...selectResult.selected.map(s => s.candidate.text),
+            ...selectResult.alternatives.map(a => a.text),
+          ]);
+          const freshQOnly = topUpsQOnly.filter(t => !existingTextsQOnly.has(t.text));
+          if (freshQOnly.length > 0) {
+            selectResult.alternatives = [...selectResult.alternatives, ...freshQOnly];
+          }
+        }
+      }
+
       for (const line of formatSelection(selectResult)) console.log(line);
 
       const accept = (nonInteractive ? 'y' : (await ask(`\nReplace queries? [Y]es / [e]dit / [n]o: `, 'y'))).trim();
@@ -829,6 +855,7 @@ async function cmdInit(opts = {}) {
             search_behavior: a.search_behavior,
             confidence: a.confidence,
           } : {}),
+          ...(a.topUp ? { topUp: true } : {}),
         }));
       }
     } catch (err) {
@@ -1320,6 +1347,38 @@ async function cmdInit(opts = {}) {
                   }
                 }
 
+                // 1.0.4 pool-topup — if Fix A's filter left <3 RETRIEVAL
+                // alternatives, autonomously generate the missing queries via
+                // a dedicated LLM call. Keeps the recovery panel's option-1
+                // --keywords command honest (must contain exactly 3 queries).
+                // Caught by cli-walkthrough skill for cells D and F before
+                // 1.0.4 was even published to npm.
+                const retrievalCount = poolAlts.filter(a =>
+                  a.search_behavior === 'retrieval-triggered'
+                ).length;
+                if (retrievalCount < 3 && primaryForPoolValidation?.providerCall) {
+                  const { topUpPool } = await import('../lib/init/research/pool-topup.js');
+                  const topUps = await topUpPool({
+                    needed: 3 - retrievalCount,
+                    brand, domain, category: categoryDescription,
+                    site, primary: primaryForPoolValidation,
+                    audienceTags, geoTags,
+                    validationCache: [],
+                  });
+                  if (topUps.length > 0) {
+                    // Dedup against selected + alternatives so a regenerated
+                    // duplicate doesn't appear twice in the pool.
+                    const existingTexts = new Set([
+                      ...selectResult.selected.map(s => s.candidate.text),
+                      ...selectResult.alternatives.map(a => a.text),
+                    ]);
+                    const fresh = topUps.filter(t => !existingTexts.has(t.text));
+                    if (fresh.length > 0) {
+                      selectResult.alternatives = [...selectResult.alternatives, ...fresh];
+                    }
+                  }
+                }
+
                 // Display selected + alternatives — formatSelection now sees
                 // the enriched alts and renders (validated) honestly.
                 for (const line of formatSelection(selectResult)) console.log(line);
@@ -1349,6 +1408,9 @@ async function cmdInit(opts = {}) {
                 // 1.0.4 Fix A.1b: include search_behavior + confidence when
                 // pool-validation succeeded so the recovery panel filter and
                 // the (validated) tag stay honest after reload.
+                // 1.0.4 pool-topup: carry topUp flag for traceability —
+                // distinguishes appended top-up entries from original research
+                // candidates in diff/report tooling.
                 if (selectResult.alternatives.length > 0) {
                   config_candidatePool = selectResult.alternatives.slice(0, 5).map(a => ({
                     text: a.text,
@@ -1359,6 +1421,7 @@ async function cmdInit(opts = {}) {
                       search_behavior: a.search_behavior,
                       confidence: a.confidence,
                     } : {}),
+                    ...(a.topUp ? { topUp: true } : {}),
                   }));
                 }
                 suggestionLang = site.lang || 'en';
