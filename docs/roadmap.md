@@ -233,6 +233,13 @@ on major-version mismatch.
 
 ## Done
 
+### 1.0.7 — published 2026-05-18
+
+- `[bug · P0]` **`gpt-5-search-api` no longer fails every OpenAI cell.** Caught by maintainer dogfood within minutes of 1.0.6 publish. `SUPPORTS_REASONING_EFFORT` whitelist excluded gen 0-4 but passed ALL `gpt-5*` including search-variants; OpenAI rejected `reasoning_effort` with HTTP 400 on every call. Whitelist now hard-excludes any model ID containing `search`.
+- `[bug · P0]` **`test/openai.test.js` codified the bug** for `gpt-5-search-api` AND `gpt-6-search-api` (future-proof). Tests rewritten to assert the correct behaviour (field DROPPED).
+- `[ux]` **Live-rows labels + countdown.** `firing…` and `60s pacing` replaced with concrete copy. Seconds tick down in real time. Abort hint at top of live region.
+- `[skill]` cli-walkthrough Pass 4 on 1.0.6 caught the upstream cause (the bug existed in code review but test gate codified it green); skill's adversarial probes proved load-bearing again.
+
 ### 1.0.6 — published 2026-05-18
 
 - `[bug · P0]` **Recovery panel no longer suggests rejected commands.** Retires 4-bucket query generation (vertical/problem/comparison queries reliably failed the commercial-only validator). New pipeline generates 5 commercial-only candidates, validates all 5, silently substitutes failures with spares. Recovery panel fires only when <3 of 5 survive.

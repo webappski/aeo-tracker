@@ -1964,11 +1964,32 @@ async function cmdRun(options = {}) {
               // tokens events from withProviderCall + withRetry → row updates.
               const onStatus = live ? (ev) => {
                 if (ev.kind === 'cooldown') {
-                  live.update(taskId, { status: 'cooldown', detail: `${(ev.ms / 1000).toFixed(0)}s waiting for TPM window` });
+                  // 1.0.7: clear labels + live countdown. Operator sees the
+                  // seconds tick down (60s → 59s → 58s …) every render frame.
+                  // Clamp ms against negative / NaN so countdown never displays
+                  // "NaNs remaining" if upstream emits garbage.
+                  const ms = Math.max(0, Number.isFinite(ev.ms) ? ev.ms : 0);
+                  const sec = Math.ceil(ms / 1000);
+                  const prefix = 'provider cooldown (post-429 backoff) — ';
+                  live.update(taskId, {
+                    status: 'cooldown',
+                    labelPrefix: prefix,
+                    detail: `${prefix}${sec}s remaining`,
+                    deadlineMs: Date.now() + ms,
+                  });
                 } else if (ev.kind === 'ledger-wait') {
-                  live.update(taskId, { status: 'ledger-wait', detail: `${(ev.ms / 1000).toFixed(0)}s pacing` });
+                  const ms = Math.max(0, Number.isFinite(ev.ms) ? ev.ms : 0);
+                  const sec = Math.ceil(ms / 1000);
+                  const prefix = 'TPM rate-limit — ';
+                  live.update(taskId, {
+                    status: 'ledger-wait',
+                    labelPrefix: prefix,
+                    detail: `${prefix}${sec}s until token-bucket refill`,
+                    deadlineMs: Date.now() + ms,
+                  });
                 } else if (ev.kind === 'firing') {
-                  live.update(taskId, { status: 'running', detail: 'firing…' });
+                  // 1.0.7: replace cryptic "firing…" with concrete action.
+                  live.update(taskId, { status: 'running', detail: 'calling provider API (network in-flight)' });
                 } else if (ev.kind === 'retrying') {
                   live.update(taskId, { status: 'running', detail: `retrying (attempt ${ev.attempt})` });
                 } else if (ev.kind === 'tokens' && process.env.AEO_LOG_TOKENS === '1') {
@@ -2156,7 +2177,11 @@ async function cmdRun(options = {}) {
     }
   }
 
-  live?.start();
+  // 1.0.7: surface the abort hint above the live region. Operator now knows
+  // the process is interruptible — and what `60s remaining` countdowns mean.
+  const totalCells = cdKeySchedules.reduce((sum, c) => sum + c.taskMetas.length, 0);
+  const distinctProviders = new Set(cdKeySchedules.map(c => c.cdKey.split(':')[0])).size;
+  live?.start(`(running ${totalCells} ${totalCells === 1 ? 'cell' : 'cells'} across ${distinctProviders} ${distinctProviders === 1 ? 'provider' : 'providers'} — press Ctrl+C to abort cleanly)`);
   try {
     const schedulingPromises = cdKeySchedules.map(({ taskMetas, schedule }) =>
       runScheduled(taskMetas.map(t => t.fn), schedule),

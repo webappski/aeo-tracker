@@ -289,6 +289,9 @@ Every flag `aeo-platform` accepts, grouped by which command consumes it.
 | `--no-html` | `report` | Markdown only — skip HTML write + browser auto-open |
 | `--no-open` | `report` | Write files but don't auto-open the browser |
 | `--no-authority` / `--no-page-signals` / `--no-entity-graph` / `--no-pricing` | `report` | Skip optional fetch-heavy checks (use behind a VPN, offline, or to dodge rate limits) |
+| `--openai-model=<id>` / `--gemini-model=<id>` / `--anthropic-model=<id>` / `--perplexity-model=<id>` | `run` | Override the model for one run only (no config rewrite). E.g. switch from `gpt-5-search-api` (6k TPM) to `gpt-5` (90k TPM) under rate-limit pressure |
+| `--add-queries "q1,q2,q3"` | `init` | Add queries to an existing config without re-running brainstorm; preserves prior basket history |
+| `--replace-queries "q1,q2,q3"` | `init` | Replace queries in an existing config (forks basket version); preserves prior versions in `basketHistory` |
 
 ## Exit codes (CI-friendly)
 
@@ -491,6 +494,15 @@ Yes — create a separate working directory for each brand with its own `.aeo-tr
 ### How often should I run it?
 
 Weekly. Daily adds noise without signal (AI models don't update fast enough to make daily deltas meaningful). Monthly loses meaningful trend resolution.
+
+### What's new in 1.0.7?
+
+Hotfix on top of 1.0.6 — surfaced by maintainer dogfood within minutes of the 1.0.6 publish.
+
+- **`gpt-5-search-api` no longer fails on every cell.** 1.0.6 sent `reasoning_effort` to all `gpt-5*` models indiscriminately; search-variants (which are RAG-tuned and stripped-down) rejected it with HTTP 400. `SUPPORTS_REASONING_EFFORT` whitelist now excludes any model ID containing `search` — works for `gpt-5-search-api`, `gpt-5-mini-search-api`, `gpt-4o-search-preview`, and any future search variant.
+- **Live status labels rewritten.** Cryptic `firing…` and `60s pacing` replaced with concrete labels: `calling provider API (network in-flight)`, `TPM rate-limit — 58s until token-bucket refill`, `provider cooldown (post-429 backoff) — 12s remaining`.
+- **Countdown ticks down in real time.** Operator sees `60s → 59s → 58s …` updating each frame, not a static label that looks frozen.
+- **Abort hint at top of live region** — `(running 12 cells across 4 providers — press Ctrl+C to abort cleanly)`. Documents the affordance.
 
 ### What's new in 1.0.6?
 
@@ -720,7 +732,7 @@ MIT — do whatever you want with it.
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "Answer Engine Optimization, Generative Engine Optimization, Brand Visibility Monitoring",
       "operatingSystem": "macOS, Linux, Windows",
-      "softwareVersion": "1.0.6",
+      "softwareVersion": "1.0.7",
       "datePublished": "2026-05-18",
       "license": "https://opensource.org/licenses/MIT",
       "downloadUrl": "https://www.npmjs.com/package/aeo-platform",

@@ -2,6 +2,30 @@
 
 All notable changes to `aeo-platform` (formerly `@webappski/aeo-tracker`).
 
+## [1.0.7] — 2026-05-18
+
+**OpenAI search-variant hotfix + live-rows UX clarity.** 1.0.6 cannot complete a single `run` with `gpt-5-search-api` (the default OpenAI model) — every cell fails with HTTP 400 "Unrecognized request argument supplied: reasoning_effort". Plus operators have no signal of what `firing` / `60s pacing` means or how to abort.
+
+### Fixed
+
+- **`SUPPORTS_REASONING_EFFORT` whitelist** in `lib/providers/openai.js` now excludes any model ID containing `search`. Search-variant models (`gpt-5-search-api`, `gpt-5-mini-search-api`, `gpt-4o-search-preview`, and future `gpt-N-search` / `oN-search`) are stripped-down RAG-tuned and reject `reasoning_effort` with HTTP 400. The previous whitelist passed all `gpt-5*` models indiscriminately. Every OpenAI cell now completes on a 1.0.6-style config.
+- **`test/openai.test.js` rewritten** — two existing tests (`gpt-5-search-api` and `gpt-6-search-api` future-proof) codified the bug as correct behaviour (asserted `reasoning_effort` should be in the body). Now assert the field is dropped at the gate. Plus 2 new tests for `gpt-5-mini-search-api` (drop) and `gpt-6` non-search (still includes).
+
+### Changed (UX)
+
+- **Live-rows status labels rewritten** for operator clarity. `firing…` → `calling provider API (network in-flight)`. `60s pacing` → `TPM rate-limit — 60s until token-bucket refill`. Cooldown message includes `post-429 backoff` context.
+- **Live countdown** during `cooldown` / `ledger-wait` states. Operator sees seconds tick down in real time (`60s → 59s → 58s …`) instead of a static label that looks frozen. Computed from absolute `deadlineMs` so it's drift-immune if the render loop falls behind.
+- **Abort hint** added at top of live region: `(running N cells across M providers — press Ctrl+C to abort cleanly)` (TTY mode only). SIGINT handler already cleans cursor; this just documents the affordance.
+
+### Added
+
+- `test/live-rows-countdown.test.js` (5 cases) — synthesises cooldown/ledger-wait events, asserts the countdown ticks tick by tick and stale countdowns clear on transition back to `running`/`done`/`error`.
+- SIGINT handler in `lib/util/live-rows.js` now flushes buffered token-cost logs (gated on `AEO_LOG_TOKENS=1`) before exit so they aren't lost on Ctrl+C.
+
+### Internal
+
+- Plan went through Step 2 REV 1 (REVISION — fictional `buildOpenAIRequestBody` reference; `update()` drops arbitrary fields; SIGINT didn't flush logBuffer) → REV 2 (APPROVED). cli-walkthrough Pass 4 from 1.0.6 surfaced 11 latent issues for 1.0.7 backlog; 3 of them remain queued (config validation in cmdRun, --keywords comma escape, --replay schema-version).
+
 ## [1.0.6] — 2026-05-18
 
 **Commercial-only pipeline with silent substitution.** Retires the 4-bucket query generation (commercial / problem / vertical / comparison) in favour of a focused commercial-only pipeline that over-generates (5 candidates for 3 slots), validates all 5 at init time, and silently substitutes failing queries with passing spares. The recovery panel fires ONLY when fewer than 3 of 5 commercial candidates survive validation — the genuine impossibility case. Closes the entire trust-failure class that recurred from 1.0.2 through 1.0.5 (recovery panel suggesting commands that the CLI itself rejected): the upstream cause (mixed-intent queries blocked by the downstream commercial-only validator) is removed rather than patched around.

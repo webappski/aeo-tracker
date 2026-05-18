@@ -40,11 +40,23 @@ const OK_RESPONSE = () => ({
 
 console.log('\ncallOpenAI reasoning_effort gate');
 
-await test('gpt-5-search-api + reasoning_effort=high → body has reasoning_effort', async () => {
+await test('gpt-5-search-api + reasoning_effort=high → field DROPPED (1.0.7 search-variant fix)', async () => {
+  // 1.0.7: search-variants reject reasoning_effort with HTTP 400. The
+  // SUPPORTS_REASONING_EFFORT gate must strip the field before the call.
+  // Pre-1.0.7 this test asserted the BUG (asserted field present); now it
+  // asserts the fix.
   stubFetch(OK_RESPONSE);
   await callOpenAI('hi', 'sk-test', 'gpt-5-search-api', { reasoning_effort: 'high' });
   const body = JSON.parse(captured[0].init.body);
-  assert.equal(body.reasoning_effort, 'high');
+  assert.equal(body.reasoning_effort, undefined,
+    'search-variants do not accept reasoning_effort — must be dropped at the gate');
+});
+
+await test('gpt-5-mini-search-api + reasoning_effort=high → field DROPPED (1.0.7)', async () => {
+  stubFetch(OK_RESPONSE);
+  await callOpenAI('hi', 'sk-test', 'gpt-5-mini-search-api', { reasoning_effort: 'high' });
+  const body = JSON.parse(captured[0].init.body);
+  assert.equal(body.reasoning_effort, undefined);
 });
 
 await test('gpt-5 (no search) + reasoning_effort=high → body has reasoning_effort', async () => {
@@ -96,11 +108,23 @@ await test('gpt-3.5-turbo + reasoning_effort → field DROPPED', async () => {
   assert.equal(body.reasoning_effort, undefined);
 });
 
-await test('future gpt-6 + reasoning_effort → body has reasoning_effort (future-proof)', async () => {
+await test('future gpt-6-search-api → field DROPPED (1.0.7 search-variant future-proof)', async () => {
+  // 1.0.7: pre-fix this test codified the bug for a future gpt-6 search
+  // variant. Now asserts the search-exclusion fires regardless of generation.
   stubFetch(OK_RESPONSE);
   await callOpenAI('hi', 'sk-test', 'gpt-6-search-api', { reasoning_effort: 'high' });
   const body = JSON.parse(captured[0].init.body);
-  assert.equal(body.reasoning_effort, 'high', 'gpt-6 future generation should auto-pass gate');
+  assert.equal(body.reasoning_effort, undefined,
+    'gpt-6-search-api must inherit the search-variant exclude');
+});
+
+await test('future gpt-6 (NON-search) + reasoning_effort=high → body has reasoning_effort', async () => {
+  // 1.0.7: non-search future generations still hit the include path.
+  stubFetch(OK_RESPONSE);
+  await callOpenAI('hi', 'sk-test', 'gpt-6', { reasoning_effort: 'high', webSearch: false });
+  const body = JSON.parse(captured[0].init.body);
+  assert.equal(body.reasoning_effort, 'high',
+    'non-search future gpt-N generations still receive reasoning_effort');
 });
 
 await test('no reasoning_effort option → no field in body (backward compat)', async () => {
